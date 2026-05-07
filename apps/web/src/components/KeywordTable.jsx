@@ -7,7 +7,7 @@ function rankDelta(change) {
   return <span className="delta neutral">0</span>;
 }
 
-export default function KeywordTable({ rows, selectedKeywordId, onSelect }) {
+export default function KeywordTable({ rows, selectedKeywordId, onSelect, compact = false }) {
   if (!rows.length) return <div className="empty-state">Keyword history is not returned by the current DataDive endpoint for this Rank Radar.</div>;
   return (
     <section className="panel table-panel">
@@ -34,7 +34,7 @@ export default function KeywordTable({ rows, selectedKeywordId, onSelect }) {
             </tr>
           </thead>
           <tbody>
-            {rows.slice(0, 80).map((row, index) => (
+            {rows.slice(0, compact ? 40 : 80).map((row, index) => (
               <motion.tr
                 key={row.id}
                 className={selectedKeywordId === row.keyword_id ? 'selected-row' : ''}

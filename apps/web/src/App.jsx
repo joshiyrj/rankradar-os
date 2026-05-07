@@ -7,6 +7,7 @@ import FilterBar from './components/FilterBar.jsx';
 import Heatmap from './components/Heatmap.jsx';
 import KeywordTable from './components/KeywordTable.jsx';
 import ProductOverview from './components/ProductOverview.jsx';
+import ProductDetailModal from './components/ProductDetailModal.jsx';
 import ProductMetrics from './components/ProductMetrics.jsx';
 import Skeleton from './components/Skeleton.jsx';
 import StatCard from './components/StatCard.jsx';
@@ -20,6 +21,7 @@ export default function App() {
   const [marketplaces, setMarketplaces] = useState([]);
   const [products, setProducts] = useState([]);
   const [selectedProduct, setSelectedProduct] = useState(null);
+  const [productModalOpen, setProductModalOpen] = useState(false);
   const [summary, setSummary] = useState(null);
   const [keywords, setKeywords] = useState([]);
   const [selectedKeyword, setSelectedKeyword] = useState(null);
@@ -145,6 +147,11 @@ export default function App() {
     }
   }
 
+  function openProduct(product) {
+    setSelectedProduct(product);
+    setProductModalOpen(true);
+  }
+
   const topStats = useMemo(() => {
     const criticalProducts = products.filter((product) => product.health_status === 'critical').length;
     return {
@@ -201,8 +208,8 @@ export default function App() {
 
                 {(view === 'dashboard' || view === 'products') && (
                   <>
-                    <ProductOverview products={products} selectedId={selectedProduct?.id} onSelect={setSelectedProduct} compact={view === 'dashboard'} />
-                    {selectedProduct && (
+                    <ProductOverview products={products} selectedId={selectedProduct?.id} onSelect={openProduct} compact={view === 'dashboard'} />
+                    {selectedProduct && !productModalOpen && (
                       <section className="detail-grid">
                         <div className="detail-main">
                           <div className="product-hero panel">
@@ -237,6 +244,17 @@ export default function App() {
         )}
         </AnimatePresence>
       </main>
+      <ProductDetailModal
+        product={productModalOpen ? selectedProduct : null}
+        summary={summary}
+        keywords={keywords}
+        selectedKeyword={selectedKeyword}
+        onKeywordSelect={setSelectedKeyword}
+        trend={trend}
+        variations={variations}
+        onClose={() => setProductModalOpen(false)}
+        TrendChart={TrendChart}
+      />
     </div>
   );
 }
