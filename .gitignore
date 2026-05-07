@@ -8,5 +8,6 @@ coverage/
 dist/
 output/
 dev-server*.log
+one-service*.log
 *.err.log
 .DS_Store

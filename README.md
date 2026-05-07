@@ -410,33 +410,28 @@ curl -X POST http://localhost:4000/api/rank-radar/sync
 - Real DataDive endpoint paths are configurable but not hardcoded because the exact API contract was not included in the project brief.
 - The local store is SQLite for immediate demo usage. PostgreSQL schema is included for production.
 - Notification webhooks are represented in env/config and alert structure; actual Slack/email/WhatsApp delivery should be wired once credentials are available.
-
 ## Render Deployment
 
-This repo includes `render.yaml` for Render free-tier deployment.
+Use one Render Web Service.
 
-Create a Blueprint from this repository, then set these environment variables in Render:
+Form values:
 
-- `DATADIVE_API_KEY`: your DataDive API key
-- `MONGODB_URI`: your MongoDB Atlas connection string
-- `MONGODB_DB`: `rankradar-os`
+- Name: `rankradar-os`
+- Language: `Python 3`
+- Branch: `main`
+- Root Directory: `services/rankradar-worker`
+- Build Command: `pip install -r requirements.txt && cd ../../apps/web && npm install && npm run build`
+- Start Command: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+- Instance Type: `Free`
+- Health Check Path: `/health`
 
-The blueprint creates:
+Environment variables:
 
-- `rankradar-worker`: Python FastAPI DataDive ingestion service
-- `rankradar-api`: Node API gateway
-- `rankradar-web`: static React dashboard
+- `RANKRADAR_ENV=production`
+- `DATADIVE_PROVIDER=live`
+- `DATADIVE_API_BASE_URL=https://api.datadive.tools`
+- `DATADIVE_API_KEY=<your DataDive key>`
+- `MONGODB_URI=<your MongoDB Atlas URI>`
+- `MONGODB_DB=rankradar-os`
 
-The app stores live DataDive Rank Radar products in MongoDB with durable upserts. It does not commit secrets, simulate product data, or delete Mongo records during sync.
-
-Production URLs expected by the blueprint:
-
-- Web: `https://rankradar-web.onrender.com`
-- API: `https://rankradar-api.onrender.com`
-- Worker: `https://rankradar-worker.onrender.com`
-
-For local development, copy `.env.example` to `.env`, set the same values, then run:
-
-```bash
-npm run dev
-```
+The single Python service serves both the React dashboard and the `/api/...` endpoints. No separate Node or static Render service is required.
