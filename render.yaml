@@ -10,6 +10,8 @@ services:
     envVars:
       - key: RANKRADAR_ENV
         value: production
+      - key: PYTHON_VERSION
+        value: 3.11.9
       - key: DATADIVE_PROVIDER
         value: live
       - key: DATADIVE_API_BASE_URL
