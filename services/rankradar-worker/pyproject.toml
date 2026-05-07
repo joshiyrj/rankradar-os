@@ -1,0 +1,16 @@
+[project]
+name = "rankradar-worker"
+version = "1.0.0"
+description = "Python DataDive ingestion and Rank Radar alerting service"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi==0.115.6",
+  "uvicorn[standard]==0.34.0",
+  "httpx==0.28.1",
+  "pydantic==2.10.4",
+  "APScheduler==3.10.4",
+  "python-dotenv==1.0.1"
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

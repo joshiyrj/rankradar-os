@@ -1,0 +1,8 @@
+{
+  "rankRecord": {
+    "required": ["product_id", "keyword_id", "marketplace_id", "rank_date"],
+    "rankMeaning": "Lower organic_rank is better; null means unranked or unavailable."
+  },
+  "alertTypes": ["CRITICAL_DROP", "MAJOR_DROP", "LOST_PAGE_1", "LOST_TOP_10", "NEW_UNRANKED", "RECOVERY"],
+  "severities": ["critical", "high", "medium", "low", "positive"]
+}
