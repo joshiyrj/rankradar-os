@@ -77,6 +77,36 @@ def api_health() -> dict[str, Any]:
     return {"ok": True, "service": "rankradar-os", "worker": health()}
 
 
+@app.get("/api/datadive/debug/niches")
+async def debug_niches() -> dict[str, Any]:
+    """Return the raw /v1/niches response so we can inspect the field structure."""
+    from .datadive_client import HttpDataDiveClient
+    if not isinstance(client, HttpDataDiveClient):
+        return {"ok": False, "error": "Only available in live mode"}
+    try:
+        payload = await client._get(client.settings.endpoint_brands)
+        return {"ok": True, "endpoint": client.settings.endpoint_brands, "raw": payload}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": str(exc)}
+
+
+@app.get("/api/datadive/debug/raw-product")
+def debug_raw_product() -> dict[str, Any]:
+    """Return the raw_payload of the first synced product so we can see what niche fields exist."""
+    import json
+    products_list = store.get_products(None, None)
+    if not products_list:
+        return {"ok": False, "error": "No products synced yet — run a sync first"}
+    first = products_list[0]
+    raw = first.get("raw_payload")
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except Exception:
+            pass
+    return {"ok": True, "product_id": first["id"], "title": first.get("title"), "raw_payload": raw}
+
+
 @app.get("/datadive/status")
 def datadive_status() -> dict[str, Any]:
     return {

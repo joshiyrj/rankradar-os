@@ -160,20 +160,14 @@ class HttpDataDiveClient(BaseDataDiveClient):
         """
         payload = await self._get(self.settings.endpoint_brands)
         items = self._items(payload)
-        brands = []
-        for item in items:
-            niche_id = str(item.get("id") or item.get("nicheId") or item.get("niche_id") or "")
-            name = str(
-                item.get("name") or item.get("nicheName") or item.get("title")
-                or item.get("niche_name") or niche_id
-            )
-            if niche_id and name:
-                brands.append({
-                    "id": f"brand-niche-{niche_id}",
-                    "datadive_brand_id": niche_id,
-                    "name": name,
-                })
-        return brands
+
+        # _items() checks standard keys (data/items/results/records).
+        # If those all miss, scan every key in the response for the first
+        # non-empty list of dicts — DataDive may use a different envelope.
+        if not items and isinstance(payload, dict):
+            items = _first_list_of_dicts(payload)
+
+        return _parse_niche_items(items)
 
     async def list_marketplaces(self, brand_id: str | None = None) -> list[dict[str, Any]]:
         products = await self.list_rank_radar_products()
@@ -244,6 +238,76 @@ _MARKETPLACE_NAMES: dict[str, str] = {
 
 def _marketplace_name(code: str) -> str:
     return _MARKETPLACE_NAMES.get(code, f"Amazon.{code}")
+
+
+def _first_list_of_dicts(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """Scan a dict for the first non-empty list of dicts (any depth, breadth-first)."""
+    # Check top-level keys
+    for val in payload.values():
+        if isinstance(val, list) and val and isinstance(val[0], dict):
+            return val
+    # Check one level deeper (nested dicts)
+    for val in payload.values():
+        if isinstance(val, dict):
+            for inner in val.values():
+                if isinstance(inner, list) and inner and isinstance(inner[0], dict):
+                    return inner
+    return []
+
+
+def _parse_niche_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Convert raw niche/brand API items to our internal brand format.
+
+    Tries many possible field name conventions used by DataDive.
+    """
+    brands = []
+    seen: set[str] = set()
+    for item in items:
+        niche_id = str(
+            item.get("id") or item.get("nicheId") or item.get("niche_id")
+            or item.get("_id") or item.get("ID") or ""
+        )
+        name = str(
+            item.get("name") or item.get("nicheName") or item.get("niche_name")
+            or item.get("title") or item.get("label") or item.get("displayName")
+            or item.get("brandName") or item.get("brand_name") or niche_id
+        )
+        if niche_id and niche_id not in seen:
+            seen.add(niche_id)
+            brands.append({
+                "id": f"brand-niche-{niche_id}",
+                "datadive_brand_id": niche_id,
+                "name": name,
+            })
+    return brands
+
+
+def extract_brands_from_rank_radars(products: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Derive brands by grouping rank-radar products by their embedded niche data.
+
+    Used as a last-resort fallback when /v1/niches returns nothing useful.
+    Tries every plausible field name DataDive might use.
+    """
+    seen: dict[str, str] = {}  # niche_id → name
+    for item in products:
+        niche = item.get("niche") or {}
+        if isinstance(niche, str):
+            niche = {}
+        niche_id = str(
+            item.get("nicheId") or item.get("niche_id") or item.get("brand_id")
+            or item.get("brandId") or niche.get("id") or niche.get("nicheId") or ""
+        )
+        niche_name = str(
+            item.get("nicheName") or item.get("niche_name") or item.get("brandName")
+            or item.get("brand_name") or niche.get("name") or niche.get("nicheName") or ""
+        )
+        if niche_id and niche_id not in seen and niche_name:
+            seen[niche_id] = niche_name
+
+    return [
+        {"id": f"brand-niche-{nid}", "datadive_brand_id": nid, "name": name}
+        for nid, name in seen.items()
+    ]
 
 
 def _filter_by_brand(rows: list[dict[str, Any]], brand_id: str) -> list[dict[str, Any]]:

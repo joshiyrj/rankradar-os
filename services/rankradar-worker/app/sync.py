@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-from .datadive_client import BaseDataDiveClient, HttpDataDiveClient
+from .datadive_client import BaseDataDiveClient, HttpDataDiveClient, extract_brands_from_rank_radars
 from .store import RankRadarStore
 
 
@@ -28,13 +28,24 @@ async def run_sync(
     try:
         if is_live:
             products = await client.list_rank_radar_products(brand_id=brand_id, marketplace=marketplace)
-            # Brands come from /v1/niches — if that endpoint fails, fall back gracefully
-            # so the store can derive brand names from marketplace codes.
+
+            # Level 1: try dedicated /v1/niches endpoint
+            brands: list = []
             try:
                 brands = await client.list_brands()
+                if brands:
+                    print(f"[RankRadar] Got {len(brands)} brands from /v1/niches")
             except Exception as brand_exc:  # noqa: BLE001
-                print(f"[RankRadar] list_brands failed ({brand_exc}); brands will be derived from marketplace codes.")
-                brands = []
+                print(f"[RankRadar] /v1/niches failed ({brand_exc})")
+
+            # Level 2: extract niche/brand from rank-radar product fields
+            if not brands:
+                brands = extract_brands_from_rank_radars(products)
+                if brands:
+                    print(f"[RankRadar] Extracted {len(brands)} brands from rank-radar product data")
+                else:
+                    print("[RankRadar] No niche fields found in products; brands will fall back to marketplace codes")
+
             store.replace_live_rank_radars(products, brands=brands)
             inserted_alerts = 0
         else:
