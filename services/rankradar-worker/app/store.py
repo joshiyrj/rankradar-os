@@ -277,9 +277,19 @@ class RankRadarStore:
     def rebuild_alerts(self) -> int:
         inserted = 0
         with self.connect() as conn:
-            records = conn.execute("SELECT * FROM rank_records WHERE previous_organic_rank IS NOT NULL ORDER BY rank_date").fetchall()
+            records = conn.execute("""
+                SELECT rr.*, k.search_volume
+                FROM rank_records rr
+                LEFT JOIN keywords k ON k.id = rr.keyword_id
+                WHERE rr.previous_organic_rank IS NOT NULL
+                ORDER BY rr.rank_date
+            """).fetchall()
             for row in records:
-                decision = detect_alert(row["previous_organic_rank"], row["organic_rank"])
+                decision = detect_alert(
+                    row["previous_organic_rank"],
+                    row["organic_rank"],
+                    search_volume=row["search_volume"] if "search_volume" in row.keys() else None,
+                )
                 if not decision:
                     continue
                 exists = conn.execute("""SELECT id FROM rank_alerts WHERE product_id=? AND COALESCE(variation_id,'')=COALESCE(?, '') AND keyword_id=? AND marketplace_id=? AND alert_type=? AND detected_at=?""",
@@ -423,8 +433,13 @@ class RankRadarStore:
 
     def trend(self, product_id: str, keyword_id: str) -> list[dict]:
         with self.connect() as conn:
-            rows = conn.execute("""SELECT rank_date, AVG(organic_rank) organic_rank, AVG(sponsored_rank) sponsored_rank, AVG(ppc_spend) ppc_spend, AVG(ppc_sales) ppc_sales
-                                   FROM rank_records WHERE product_id=? AND keyword_id=? GROUP BY rank_date ORDER BY rank_date""", (product_id, keyword_id)).fetchall()
+            rows = conn.execute("""
+                SELECT rank_date, AVG(organic_rank) AS organic_rank
+                FROM rank_records
+                WHERE product_id=? AND keyword_id=?
+                GROUP BY rank_date
+                ORDER BY rank_date
+            """, (product_id, keyword_id)).fetchall()
             return [dict(r) for r in rows]
 
     def variations(self, product_id: str, keyword_id: str) -> list[dict]:
