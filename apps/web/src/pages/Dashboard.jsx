@@ -210,14 +210,14 @@ export default function Dashboard({ brands, marketplaces, products, alerts, load
         <div className="space-y-1">
           <label className="text-xs text-muted-foreground font-medium">Brand</label>
           <Select
-            value={localFilters.brandId}
-            onValueChange={(v) => setLocalFilters({ brandId: v, marketplace: '', productId: '' })}
+            value={localFilters.brandId || '__all__'}
+            onValueChange={(v) => setLocalFilters({ brandId: v === '__all__' ? '' : v, marketplace: '', productId: '' })}
           >
             <SelectTrigger className="w-40 h-9 text-xs">
               <SelectValue placeholder="All brands" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="">All brands</SelectItem>
+              <SelectItem value="__all__">All brands</SelectItem>
               {brands.map((b) => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}
             </SelectContent>
           </Select>
@@ -227,14 +227,14 @@ export default function Dashboard({ brands, marketplaces, products, alerts, load
         <div className="space-y-1">
           <label className="text-xs text-muted-foreground font-medium">Marketplace</label>
           <Select
-            value={localFilters.marketplace}
-            onValueChange={(v) => setLocalFilters((f) => ({ ...f, marketplace: v, productId: '' }))}
+            value={localFilters.marketplace || '__all__'}
+            onValueChange={(v) => setLocalFilters((f) => ({ ...f, marketplace: v === '__all__' ? '' : v, productId: '' }))}
           >
             <SelectTrigger className="w-44 h-9 text-xs">
               <SelectValue placeholder="All marketplaces" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="">All marketplaces</SelectItem>
+              <SelectItem value="__all__">All marketplaces</SelectItem>
               {availableMarketplaces.map((m) => <SelectItem key={m.id} value={m.code}>{m.name}</SelectItem>)}
             </SelectContent>
           </Select>
@@ -244,14 +244,14 @@ export default function Dashboard({ brands, marketplaces, products, alerts, load
         <div className="space-y-1">
           <label className="text-xs text-muted-foreground font-medium">Product</label>
           <Select
-            value={localFilters.productId}
-            onValueChange={(v) => setLocalFilters((f) => ({ ...f, productId: v }))}
+            value={localFilters.productId || '__all__'}
+            onValueChange={(v) => setLocalFilters((f) => ({ ...f, productId: v === '__all__' ? '' : v }))}
           >
             <SelectTrigger className="w-56 h-9 text-xs">
               <SelectValue placeholder="All products" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="">All products</SelectItem>
+              <SelectItem value="__all__">All products</SelectItem>
               {availableProducts.map((p) => <SelectItem key={p.id} value={p.id}>{p.title}</SelectItem>)}
             </SelectContent>
           </Select>

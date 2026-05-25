@@ -269,12 +269,12 @@ export default function RankRadar({ brands, marketplaces, products, alerts, filt
       <div className="flex flex-wrap items-end gap-3">
         <div className="space-y-1 min-w-[160px]">
           <label className="text-xs text-muted-foreground font-medium">Brand</label>
-          <Select value={localFilters.brandId} onValueChange={(v) => setLocalFilters((f) => ({ ...f, brandId: v, marketplace: '', productId: '' }))}>
+          <Select value={localFilters.brandId || '__all__'} onValueChange={(v) => setLocalFilters((f) => ({ ...f, brandId: v === '__all__' ? '' : v, marketplace: '', productId: '' }))}>
             <SelectTrigger className="w-40">
               <SelectValue placeholder="All brands" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="">All brands</SelectItem>
+              <SelectItem value="__all__">All brands</SelectItem>
               {brands.map((b) => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}
             </SelectContent>
           </Select>
@@ -282,12 +282,12 @@ export default function RankRadar({ brands, marketplaces, products, alerts, filt
 
         <div className="space-y-1 min-w-[160px]">
           <label className="text-xs text-muted-foreground font-medium">Marketplace</label>
-          <Select value={localFilters.marketplace} onValueChange={(v) => setLocalFilters((f) => ({ ...f, marketplace: v, productId: '' }))}>
+          <Select value={localFilters.marketplace || '__all__'} onValueChange={(v) => setLocalFilters((f) => ({ ...f, marketplace: v === '__all__' ? '' : v, productId: '' }))}>
             <SelectTrigger className="w-44">
               <SelectValue placeholder="All marketplaces" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="">All marketplaces</SelectItem>
+              <SelectItem value="__all__">All marketplaces</SelectItem>
               {localMarketplaces.map((m) => <SelectItem key={m.id} value={m.code}>{m.name}</SelectItem>)}
             </SelectContent>
           </Select>
@@ -295,12 +295,12 @@ export default function RankRadar({ brands, marketplaces, products, alerts, filt
 
         <div className="space-y-1 min-w-[200px]">
           <label className="text-xs text-muted-foreground font-medium">Product</label>
-          <Select value={localFilters.productId} onValueChange={(v) => setLocalFilters((f) => ({ ...f, productId: v }))}>
+          <Select value={localFilters.productId || '__all__'} onValueChange={(v) => setLocalFilters((f) => ({ ...f, productId: v === '__all__' ? '' : v }))}>
             <SelectTrigger className="w-56">
               <SelectValue placeholder="Select product" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="">Select product</SelectItem>
+              <SelectItem value="__all__">Select product</SelectItem>
               {localProducts.map((p) => <SelectItem key={p.id} value={p.id}>{p.title}</SelectItem>)}
             </SelectContent>
           </Select>

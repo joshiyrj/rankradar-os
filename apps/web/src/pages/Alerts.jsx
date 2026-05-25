@@ -221,12 +221,12 @@ export default function Alerts() {
           />
         </div>
 
-        <Select value={severityFilter} onValueChange={setSeverityFilter}>
+        <Select value={severityFilter || '__all__'} onValueChange={(v) => setSeverityFilter(v === '__all__' ? '' : v)}>
           <SelectTrigger className="w-36 h-9 text-xs">
             <SelectValue placeholder="All severities" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="">All severities</SelectItem>
+            <SelectItem value="__all__">All severities</SelectItem>
             <SelectItem value="critical">Critical</SelectItem>
             <SelectItem value="high">High</SelectItem>
             <SelectItem value="medium">Medium</SelectItem>
