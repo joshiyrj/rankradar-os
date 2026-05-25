@@ -1,18 +1,21 @@
 import { useMemo, useState } from 'react';
 import { useReactTable, getCoreRowModel, getSortedRowModel, getFilteredRowModel, getPaginationRowModel, flexRender } from '@tanstack/react-table';
-import { ChevronDown, ChevronUp, ChevronsUpDown, Search } from 'lucide-react';
+import { ChevronDown, ChevronUp, ChevronsUpDown, Search, Star } from 'lucide-react';
+import { motion } from 'framer-motion';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn, formatSV, timeAgo } from '@/lib/utils';
+import { getWatchlist, toggleWatchlist } from '@/pages/Watchlist';
 
 const HEALTH_VARIANT = { critical: 'critical', watch: 'high', stable: 'positive', improving: 'positive' };
 
 export default function Products({ products, loading }) {
   const [globalFilter, setGlobalFilter] = useState('');
   const [sorting, setSorting] = useState([{ id: 'critical_alerts', desc: true }]);
+  const [watchlist, setWatchlist] = useState(() => getWatchlist());
 
   const columns = useMemo(() => [
     {
@@ -80,7 +83,28 @@ export default function Products({ products, loading }) {
       header: 'Last Synced',
       cell: ({ getValue }) => <span className="text-xs text-muted-foreground">{timeAgo(getValue())}</span>,
     },
-  ], []);
+    {
+      id: 'watchlist',
+      header: '',
+      size: 40,
+      cell: ({ row }) => {
+        const id = row.original.id;
+        const pinned = watchlist.includes(id);
+        return (
+          <button
+            onClick={() => setWatchlist(toggleWatchlist(id))}
+            title={pinned ? 'Remove from watchlist' : 'Add to watchlist'}
+            className={cn(
+              'transition-colors p-1 rounded hover:bg-secondary',
+              pinned ? 'text-yellow-400' : 'text-muted-foreground hover:text-yellow-400'
+            )}
+          >
+            <Star className="w-3.5 h-3.5" fill={pinned ? 'currentColor' : 'none'} />
+          </button>
+        );
+      },
+    },
+  ], [watchlist]);
 
   const table = useReactTable({
     data: products,
