@@ -75,7 +75,6 @@ export default function Settings() {
               <ConfigRow label="Provider" configured={true} value={status.provider} />
               <ConfigRow label="API Key" configured={status.apiKeyConfigured} />
               <ConfigRow label="Base URL" configured={status.baseUrlConfigured} />
-              <ConfigRow label="Org ID" configured={status.orgConfigured} value="Optional" />
             </div>
           ) : (
             <p className="text-sm text-muted-foreground">Could not load status.</p>
@@ -150,7 +149,6 @@ export default function Settings() {
           <pre className="p-3 rounded bg-muted text-xs text-foreground overflow-x-auto">{`DATADIVE_API_KEY=your_api_key_here
 DATADIVE_API_BASE_URL=https://api.datadive.tools
 DATADIVE_PROVIDER=live
-DATADIVE_ORG_ID=optional_org_id
 DATADIVE_SYNC_INTERVAL_MINUTES=60
 MONGODB_URI=mongodb://...   (for live mode)
 MONGODB_DB=rankradar-os`}</pre>

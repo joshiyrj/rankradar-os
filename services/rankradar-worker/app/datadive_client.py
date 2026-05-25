@@ -145,16 +145,52 @@ class HttpDataDiveClient(BaseDataDiveClient):
         return {"ok": True, "provider": "live", "brandCount": len(brands), "message": "DataDive API responded successfully."}
 
     async def list_brands(self) -> list[dict[str, Any]]:
+        """Fetch real brand/niche names from the niches endpoint."""
+        try:
+            payload = await self._get(self.settings.endpoint_brands)
+            items = self._items(payload)
+            if items:
+                brands = []
+                for item in items:
+                    niche_id = str(
+                        item.get("id") or item.get("nicheId") or item.get("niche_id") or ""
+                    )
+                    name = str(
+                        item.get("name") or item.get("nicheName") or item.get("title")
+                        or item.get("niche_name") or niche_id
+                    )
+                    if niche_id and name:
+                        brands.append({
+                            "id": f"brand-niche-{niche_id}",
+                            "datadive_brand_id": niche_id,
+                            "name": name,
+                        })
+                if brands:
+                    return brands
+        except Exception:  # noqa: BLE001
+            pass
+        # Fallback: derive from marketplace codes present in products
         products = await self.list_rank_radar_products()
         marketplaces = sorted({str(item.get("marketplace") or "com") for item in products})
-        return [{"id": f"brand-datadive-{code}", "datadive_brand_id": code, "name": f"DataDive {code.upper()} Rank Radars"} for code in marketplaces] or [
-            {"id": "brand-datadive", "datadive_brand_id": "datadive", "name": "DataDive Rank Radars"}
-        ]
+        return [
+            {"id": f"brand-datadive-{code}", "datadive_brand_id": f"datadive-{code}", "name": f"Amazon {code.upper()} Rank Radars"}
+            for code in marketplaces
+        ] or [{"id": "brand-datadive", "datadive_brand_id": "datadive", "name": "DataDive Rank Radars"}]
 
     async def list_marketplaces(self, brand_id: str | None = None) -> list[dict[str, Any]]:
         products = await self.list_rank_radar_products()
+        if brand_id:
+            products = _filter_by_brand(products, brand_id)
         codes = sorted({str(item.get("marketplace") or "com") for item in products})
-        return [{"id": f"market-{code}", "code": code, "name": f"Amazon {code}", "amazon_domain": f"amazon.{code}"} for code in codes]
+        return [
+            {
+                "id": f"market-{code}",
+                "code": code,
+                "name": _marketplace_name(code),
+                "amazon_domain": f"amazon.{code}",
+            }
+            for code in codes
+        ]
 
     async def list_rank_radar_products(self, brand_id: str | None = None, marketplace: str | None = None) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
@@ -169,9 +205,8 @@ class HttpDataDiveClient(BaseDataDiveClient):
             page += 1
         if marketplace:
             rows = [row for row in rows if str(row.get("marketplace")) == str(marketplace)]
-        if brand_id and brand_id.startswith("brand-datadive-"):
-            brand_marketplace = brand_id.replace("brand-datadive-", "", 1)
-            rows = [row for row in rows if str(row.get("marketplace")) == brand_marketplace]
+        if brand_id:
+            rows = _filter_by_brand(rows, brand_id)
         return rows
 
     async def get_product_rank_radar(self, product_id: str, marketplace: str | None, date_from: str | None, date_to: str | None) -> dict[str, Any]:
@@ -184,6 +219,47 @@ class HttpDataDiveClient(BaseDataDiveClient):
     async def get_variation_ranks(self, product_id: str, keyword_id: str, marketplace: str | None, date_from: str | None, date_to: str | None) -> list[dict[str, Any]]:
         path = self.settings.endpoint_variation_ranks.format(product_id=product_id, keyword_id=keyword_id)
         return self._items(await self._get(path, {"marketplace": marketplace, "dateFrom": date_from, "dateTo": date_to}))
+
+
+_MARKETPLACE_NAMES: dict[str, str] = {
+    "com": "Amazon.com",
+    "co.uk": "Amazon.co.uk",
+    "de": "Amazon.de",
+    "fr": "Amazon.fr",
+    "es": "Amazon.es",
+    "it": "Amazon.it",
+    "ca": "Amazon.ca",
+    "au": "Amazon.com.au",
+    "in": "Amazon.in",
+    "jp": "Amazon.co.jp",
+    "mx": "Amazon.com.mx",
+    "sg": "Amazon.sg",
+    "ae": "Amazon.ae",
+    "sa": "Amazon.sa",
+    "nl": "Amazon.nl",
+    "pl": "Amazon.pl",
+    "se": "Amazon.se",
+    "br": "Amazon.com.br",
+    "tr": "Amazon.com.tr",
+}
+
+
+def _marketplace_name(code: str) -> str:
+    return _MARKETPLACE_NAMES.get(code, f"Amazon.{code}")
+
+
+def _filter_by_brand(rows: list[dict[str, Any]], brand_id: str) -> list[dict[str, Any]]:
+    """Filter rank radar product rows by brand_id using nicheId or marketplace fallback."""
+    if brand_id.startswith("brand-niche-"):
+        niche_id = brand_id[len("brand-niche-"):]
+        return [
+            row for row in rows
+            if str(row.get("nicheId") or row.get("niche_id") or row.get("niche", {}).get("id") or "") == niche_id
+        ]
+    if brand_id.startswith("brand-datadive-"):
+        code = brand_id[len("brand-datadive-"):]
+        return [row for row in rows if str(row.get("marketplace") or "com") == code]
+    return rows
 
 
 def extract_sqp_fields(item: dict[str, Any]) -> dict[str, float | None]:

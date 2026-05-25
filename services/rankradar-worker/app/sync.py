@@ -27,13 +27,14 @@ async def run_sync(
     try:
         connection = await client.test_connection()
         products = await client.list_rank_radar_products(brand_id=brand_id, marketplace=marketplace)
+        brands = await client.list_brands()
         provider = connection.get("provider", "mock")
 
         if provider == "mock":
             store.upsert_seed_data()
             inserted_alerts = store.rebuild_alerts()
         else:
-            store.replace_live_rank_radars(products)
+            store.replace_live_rank_radars(products, brands=brands)
             inserted_alerts = 0
 
         if is_live:

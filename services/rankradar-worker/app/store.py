@@ -246,7 +246,7 @@ class RankRadarStore:
                              (row["id"], row["product_id"], row["variation_id"], row["keyword_id"], row["marketplace_id"], row["rank_date"], row["day_name"], row["organic_rank"], row["previous_organic_rank"], row["rank_change"], row["sponsored_rank"], row["ppc_spend"], row["ppc_sales"], row["ppc_units"], row["impressions"], row["clicks"], row["ctr"], row["conversion_rate"], json.dumps(row["raw_payload"])))
         self.rebuild_alerts()
 
-    def replace_live_rank_radars(self, products: list[dict[str, Any]]) -> None:
+    def replace_live_rank_radars(self, products: list[dict[str, Any]], brands: list[dict[str, Any]] | None = None) -> None:
         """Normalize DataDive Rank Radar list rows into the dashboard schema.
 
         DataDive's list endpoint contains product, marketplace, keyword count, and top-10/top-50
@@ -254,23 +254,55 @@ class RankRadarStore:
         """
         now = datetime.now(timezone.utc).isoformat()
         marketplaces = sorted({str(row.get("marketplace") or "com") for row in products})
+
+        # Build niche_id → (brand_id, brand_name) lookup from real brand data
+        brand_by_niche_id: dict[str, tuple[str, str]] = {}
+        if brands:
+            for brand in brands:
+                niche_id = str(brand.get("datadive_brand_id") or "")
+                brand_db_id = str(brand.get("id") or f"brand-niche-{niche_id}")
+                brand_name = str(brand.get("name") or niche_id)
+                if niche_id:
+                    brand_by_niche_id[niche_id] = (brand_db_id, brand_name)
+
         with self.connect() as conn:
             conn.execute("DELETE FROM rank_alerts")
             conn.execute("DELETE FROM rank_records")
             conn.execute("DELETE FROM keywords WHERE datadive_keyword_id LIKE 'datadive-summary-%'")
             conn.execute("DELETE FROM product_variations WHERE product_id LIKE 'rr-%'")
             conn.execute("DELETE FROM products WHERE datadive_product_id IS NOT NULL")
-            conn.execute("DELETE FROM brands WHERE datadive_brand_id LIKE 'datadive-%'")
+            # Remove all previously live-synced brands (niche-based and marketplace-based)
+            conn.execute("DELETE FROM brands WHERE id LIKE 'brand-niche-%' OR id LIKE 'brand-datadive-%'")
             conn.execute("DELETE FROM marketplaces WHERE id LIKE 'market-%'")
 
+            # Insert real brands from niche data
+            if brand_by_niche_id:
+                for niche_id, (brand_db_id, brand_name) in brand_by_niche_id.items():
+                    conn.execute(
+                        "INSERT OR REPLACE INTO brands(id, datadive_brand_id, name) VALUES(?,?,?)",
+                        (brand_db_id, niche_id, brand_name),
+                    )
+            else:
+                # Fallback: create placeholder brands from marketplace codes
+                for code in marketplaces or ["com"]:
+                    conn.execute(
+                        "INSERT OR REPLACE INTO brands(id, datadive_brand_id, name) VALUES(?,?,?)",
+                        (f"brand-datadive-{code}", f"datadive-{code}", f"Amazon {code.upper()} Rank Radars"),
+                    )
+
+            # Insert marketplace records with proper display names
+            _mp_names = {
+                "com": "Amazon.com", "co.uk": "Amazon.co.uk", "de": "Amazon.de",
+                "fr": "Amazon.fr", "es": "Amazon.es", "it": "Amazon.it", "ca": "Amazon.ca",
+                "au": "Amazon.com.au", "in": "Amazon.in", "jp": "Amazon.co.jp",
+                "mx": "Amazon.com.mx", "sg": "Amazon.sg", "ae": "Amazon.ae",
+                "sa": "Amazon.sa", "nl": "Amazon.nl", "pl": "Amazon.pl",
+                "se": "Amazon.se", "br": "Amazon.com.br", "tr": "Amazon.com.tr",
+            }
             for code in marketplaces or ["com"]:
                 conn.execute(
-                    "INSERT OR REPLACE INTO brands(id, datadive_brand_id, name) VALUES(?,?,?)",
-                    (f"brand-datadive-{code}", f"datadive-{code}", f"DataDive {code.upper()} Rank Radars"),
-                )
-                conn.execute(
                     "INSERT OR REPLACE INTO marketplaces(id, code, name, amazon_domain) VALUES(?,?,?,?)",
-                    (f"market-{code}", code, f"Amazon {code}", f"amazon.{code}"),
+                    (f"market-{code}", code, _mp_names.get(code, f"Amazon.{code}"), f"amazon.{code}"),
                 )
 
             for index, item in enumerate(products):
@@ -288,6 +320,19 @@ class RankRadarStore:
                 top10_sv = int(item.get("top10SV") or 0)
                 top50_sv = int(item.get("top50SV") or 0)
 
+                # Map product to its real brand via nicheId
+                niche_id = str(
+                    item.get("nicheId") or item.get("niche_id")
+                    or (item.get("niche") or {}).get("id") or ""
+                )
+                if niche_id and niche_id in brand_by_niche_id:
+                    product_brand_id = brand_by_niche_id[niche_id][0]
+                elif brand_by_niche_id:
+                    # Has brands but this product's niche not found — use first brand as fallback
+                    product_brand_id = next(iter(brand_by_niche_id.values()))[0]
+                else:
+                    product_brand_id = f"brand-datadive-{marketplace}"
+
                 conn.execute(
                     """INSERT OR REPLACE INTO products(id, datadive_product_id, brand_id, marketplace_id, title, asin, parent_asin, sku, image_url,
                        datadive_status, keyword_count, top10_kw, top10_sv, top50_kw, top50_sv, raw_payload, last_synced_at)
@@ -295,7 +340,7 @@ class RankRadarStore:
                     (
                         product_id,
                         rank_radar_id,
-                        f"brand-datadive-{marketplace}",
+                        product_brand_id,
                         f"market-{marketplace}",
                         title,
                         asin,
