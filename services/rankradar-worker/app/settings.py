@@ -22,7 +22,7 @@ def _bool(value: str | None, default: bool = False) -> bool:
 class Settings:
     env: str = os.getenv("RANKRADAR_ENV", "development")
     db_path: str = os.getenv("RANKRADAR_DB_PATH", "./data/rankradar.sqlite3")
-    datadive_provider: str = os.getenv("DATADIVE_PROVIDER", "live")
+    datadive_provider: str = os.getenv("DATADIVE_PROVIDER", "mock")
     datadive_api_key: str = os.getenv("DATADIVE_API_KEY", "")
     datadive_api_base_url: str = os.getenv("DATADIVE_API_BASE_URL", "https://api.datadive.tools")
     datadive_org_id: str = os.getenv("DATADIVE_ORG_ID", "")

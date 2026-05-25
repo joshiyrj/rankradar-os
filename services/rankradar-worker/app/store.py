@@ -749,7 +749,7 @@ class RankRadarStore:
             "enabled": 1 if payload.get("enabled", True) else 0,
         }
         with self.connect() as conn:
-            conn.execute("INSERT INTO alert_rules(id, scope_type, scope_id, rule_type, threshold_value, enabled) VALUES(?,?,?,?,?,?)", tuple(row.values()))
+            conn.execute("INSERT OR REPLACE INTO alert_rules(id, scope_type, scope_id, rule_type, threshold_value, enabled) VALUES(?,?,?,?,?,?)", tuple(row.values()))
         return row
 
     def sync_runs(self) -> list[dict]:

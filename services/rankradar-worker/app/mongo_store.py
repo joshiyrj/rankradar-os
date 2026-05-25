@@ -22,8 +22,9 @@ class MongoRankRadarStore:
         self.db.brands.create_index([("id", ASCENDING)], unique=True)
         self.db.marketplaces.create_index([("id", ASCENDING)], unique=True)
         self.db.products.create_index([("id", ASCENDING)], unique=True)
-        self.db.products.create_index([("datadive_product_id", ASCENDING)], unique=True)
+        self.db.products.create_index([("datadive_product_id", ASCENDING)], unique=True, sparse=True)
         self.db.sync_runs.create_index([("started_at", ASCENDING)])
+        self.db.alert_rules.create_index([("id", ASCENDING)], unique=True)
 
     def seed_if_empty(self) -> None:
         return None
@@ -35,17 +36,42 @@ class MongoRankRadarStore:
         row.pop("_id", None)
         return row
 
-    def replace_live_rank_radars(self, products: list[dict[str, Any]]) -> None:
+    def replace_live_rank_radars(self, products: list[dict[str, Any]], brands: list[dict[str, Any]] | None = None) -> None:
         now = datetime.now(timezone.utc).isoformat()
         marketplace_codes = sorted({str(row.get("marketplace") or "com") for row in products})
 
+        # Build niche_id → (brand_db_id, brand_name) lookup from real brand data
+        brand_by_niche_id: dict[str, tuple[str, str]] = {}
+        if brands:
+            for brand in brands:
+                niche_id = str(brand.get("datadive_brand_id") or "")
+                brand_db_id = str(brand.get("id") or f"brand-niche-{niche_id}")
+                brand_name = str(brand.get("name") or niche_id)
+                if niche_id:
+                    brand_by_niche_id[niche_id] = (brand_db_id, brand_name)
+
+        _mp_names = {
+            "com": "Amazon.com", "co.uk": "Amazon.co.uk", "de": "Amazon.de",
+            "fr": "Amazon.fr", "es": "Amazon.es", "it": "Amazon.it", "ca": "Amazon.ca",
+            "au": "Amazon.com.au", "in": "Amazon.in", "jp": "Amazon.co.jp",
+            "mx": "Amazon.com.mx", "sg": "Amazon.sg", "ae": "Amazon.ae",
+            "sa": "Amazon.sa", "nl": "Amazon.nl", "pl": "Amazon.pl",
+            "se": "Amazon.se", "br": "Amazon.com.br", "tr": "Amazon.com.tr",
+        }
+
         brand_ops = []
         marketplace_ops = []
+        if brand_by_niche_id:
+            for niche_id, (brand_db_id, brand_name) in brand_by_niche_id.items():
+                brand_doc = {"id": brand_db_id, "datadive_brand_id": niche_id, "name": brand_name, "updated_at": now}
+                brand_ops.append(UpdateOne({"id": brand_db_id}, {"$set": brand_doc, "$setOnInsert": {"created_at": now}}, upsert=True))
+        else:
+            for code in marketplace_codes or ["com"]:
+                brand_doc = {"id": f"brand-datadive-{code}", "datadive_brand_id": f"datadive-{code}", "name": f"Amazon {code.upper()} Rank Radars", "updated_at": now}
+                brand_ops.append(UpdateOne({"id": brand_doc["id"]}, {"$set": brand_doc, "$setOnInsert": {"created_at": now}}, upsert=True))
         for code in marketplace_codes or ["com"]:
-            brand = {"id": f"brand-datadive-{code}", "datadive_brand_id": f"datadive-{code}", "name": f"DataDive {code.upper()} Rank Radars", "updated_at": now}
-            marketplace = {"id": f"market-{code}", "code": code, "name": f"Amazon {code}", "amazon_domain": f"amazon.{code}", "updated_at": now}
-            brand_ops.append(UpdateOne({"id": brand["id"]}, {"$set": brand, "$setOnInsert": {"created_at": now}}, upsert=True))
-            marketplace_ops.append(UpdateOne({"id": marketplace["id"]}, {"$set": marketplace, "$setOnInsert": {"created_at": now}}, upsert=True))
+            mp_doc = {"id": f"market-{code}", "code": code, "name": _mp_names.get(code, f"Amazon.{code}"), "amazon_domain": f"amazon.{code}", "updated_at": now}
+            marketplace_ops.append(UpdateOne({"id": mp_doc["id"]}, {"$set": mp_doc, "$setOnInsert": {"created_at": now}}, upsert=True))
         if brand_ops:
             self.db.brands.bulk_write(brand_ops, ordered=False)
         if marketplace_ops:
@@ -58,14 +84,31 @@ class MongoRankRadarStore:
             asin_obj = item.get("asin") if isinstance(item.get("asin"), dict) else {}
             marketplace = str(item.get("marketplace") or "com")
             asin = str(asin_obj.get("asin") or item.get("asin") or rank_radar_id[:10]).upper()
+
+            # Map product to its real brand via nicheId
+            niche_id = str(
+                item.get("nicheId") or item.get("niche_id")
+                or (item.get("niche") or {}).get("id") or ""
+            )
+            if niche_id and niche_id in brand_by_niche_id:
+                product_brand_id = brand_by_niche_id[niche_id][0]
+                product_brand_name = brand_by_niche_id[niche_id][1]
+            elif brand_by_niche_id:
+                first = next(iter(brand_by_niche_id.values()))
+                product_brand_id = first[0]
+                product_brand_name = first[1]
+            else:
+                product_brand_id = f"brand-datadive-{marketplace}"
+                product_brand_name = f"Amazon {marketplace.upper()} Rank Radars"
+
             product = {
                 "id": f"rr-{rank_radar_id}",
                 "datadive_product_id": rank_radar_id,
-                "brand_id": f"brand-datadive-{marketplace}",
+                "brand_id": product_brand_id,
                 "marketplace_id": f"market-{marketplace}",
-                "brand_name": f"DataDive {marketplace.upper()} Rank Radars",
+                "brand_name": product_brand_name,
                 "marketplace_code": marketplace,
-                "marketplace_name": f"Amazon {marketplace}",
+                "marketplace_name": _mp_names.get(marketplace, f"Amazon.{marketplace}"),
                 "title": item.get("title") or asin_obj.get("title") or f"DataDive Rank Radar {asin}",
                 "asin": asin,
                 "parent_asin": asin_obj.get("parent_asin") or item.get("parentAsin") or asin,
@@ -240,10 +283,26 @@ class MongoRankRadarStore:
         })
 
     def alert_rules(self) -> list[dict[str, Any]]:
-        return []
+        rows = list(self.db.alert_rules.find({}, {"_id": 0}).sort("scope_type", ASCENDING))
+        return [self._clean(r) for r in rows]
 
     def add_alert_rule(self, payload: dict[str, Any]) -> dict[str, Any]:
-        return {"id": payload.get("id") or f"rule-{uuid4().hex[:10]}", **payload}
+        now = datetime.now(timezone.utc).isoformat()
+        row = {
+            "id": payload.get("id") or f"rule-{uuid4().hex[:10]}",
+            "scope_type": payload.get("scope_type", "global"),
+            "scope_id": payload.get("scope_id"),
+            "rule_type": payload.get("rule_type", "CRITICAL_DROP"),
+            "threshold_value": int(payload.get("threshold_value", 10)),
+            "enabled": bool(payload.get("enabled", True)),
+            "updated_at": now,
+        }
+        self.db.alert_rules.update_one(
+            {"id": row["id"]},
+            {"$set": row, "$setOnInsert": {"created_at": now}},
+            upsert=True,
+        )
+        return row
 
     def sync_runs(self) -> list[dict[str, Any]]:
         return [self._clean(row) for row in self.db.sync_runs.find({}, {"_id": 0}).sort("started_at", -1).limit(25)]

@@ -141,41 +141,39 @@ class HttpDataDiveClient(BaseDataDiveClient):
         return []
 
     async def test_connection(self) -> dict[str, Any]:
-        brands = await self.list_brands()
-        return {"ok": True, "provider": "live", "brandCount": len(brands), "message": "DataDive API responded successfully."}
+        """Verify the API key works by fetching one page of products."""
+        payload = await self._get(self.settings.endpoint_products, {"currentPage": 1, "pageSize": 1, "status": "ALL"})
+        items = self._items(payload)
+        return {
+            "ok": True,
+            "provider": "live",
+            "message": "DataDive API responded successfully.",
+            "productsAccessible": len(items) > 0,
+        }
 
     async def list_brands(self) -> list[dict[str, Any]]:
-        """Fetch real brand/niche names from the niches endpoint."""
-        try:
-            payload = await self._get(self.settings.endpoint_brands)
-            items = self._items(payload)
-            if items:
-                brands = []
-                for item in items:
-                    niche_id = str(
-                        item.get("id") or item.get("nicheId") or item.get("niche_id") or ""
-                    )
-                    name = str(
-                        item.get("name") or item.get("nicheName") or item.get("title")
-                        or item.get("niche_name") or niche_id
-                    )
-                    if niche_id and name:
-                        brands.append({
-                            "id": f"brand-niche-{niche_id}",
-                            "datadive_brand_id": niche_id,
-                            "name": name,
-                        })
-                if brands:
-                    return brands
-        except Exception:  # noqa: BLE001
-            pass
-        # Fallback: derive from marketplace codes present in products
-        products = await self.list_rank_radar_products()
-        marketplaces = sorted({str(item.get("marketplace") or "com") for item in products})
-        return [
-            {"id": f"brand-datadive-{code}", "datadive_brand_id": f"datadive-{code}", "name": f"Amazon {code.upper()} Rank Radars"}
-            for code in marketplaces
-        ] or [{"id": "brand-datadive", "datadive_brand_id": "datadive", "name": "DataDive Rank Radars"}]
+        """Fetch real brand/niche names from /v1/niches.
+
+        Returns an empty list if the endpoint returns no parseable items.
+        Callers should handle [] gracefully (store will derive brands from
+        marketplace codes as a fallback).
+        """
+        payload = await self._get(self.settings.endpoint_brands)
+        items = self._items(payload)
+        brands = []
+        for item in items:
+            niche_id = str(item.get("id") or item.get("nicheId") or item.get("niche_id") or "")
+            name = str(
+                item.get("name") or item.get("nicheName") or item.get("title")
+                or item.get("niche_name") or niche_id
+            )
+            if niche_id and name:
+                brands.append({
+                    "id": f"brand-niche-{niche_id}",
+                    "datadive_brand_id": niche_id,
+                    "name": name,
+                })
+        return brands
 
     async def list_marketplaces(self, brand_id: str | None = None) -> list[dict[str, Any]]:
         products = await self.list_rank_radar_products()

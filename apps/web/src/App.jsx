@@ -69,16 +69,25 @@ export default function App() {
     api.marketplaces(filters.brandId).then(setMarketplaces).catch(console.error);
   }, [filters.brandId]);
 
-  async function runSync() {
+  const runSync = useCallback(async () => {
     setSyncing(true);
     setSyncError('');
     try {
-      await api.sync({ brandId: filters.brandId, marketplace: filters.marketplace });
-      const [productRows, alertRows, syncRuns] = await Promise.all([
+      const result = await api.sync({ brandId: filters.brandId, marketplace: filters.marketplace });
+      if (!result?.ok) {
+        setSyncError(result?.error || result?.syncRun?.error_message || 'Sync failed — check Settings for details.');
+        return;
+      }
+      // Refresh all data after a successful sync (brands may change)
+      const [brandRows, allMarketplaces, productRows, alertRows, syncRuns] = await Promise.all([
+        api.brands(),
+        api.marketplaces(),
         api.products(filters),
         api.alerts({ ...filters, status: 'open' }),
         api.syncRuns().catch(() => []),
       ]);
+      setBrands(brandRows);
+      setMarketplaces(allMarketplaces);
       setProducts(productRows);
       setAlerts(alertRows);
       const lastSuccess = syncRuns.find((r) => r.status === 'success');
@@ -88,19 +97,19 @@ export default function App() {
     } finally {
       setSyncing(false);
     }
-  }
+  }, [filters]);
 
   // Keyboard shortcuts: R = sync, 1-6 = pages
   useEffect(() => {
     function onKey(e) {
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) return;
-      if (e.key === 'r' || e.key === 'R') { e.preventDefault(); runSync(); }
+      if ((e.key === 'r' || e.key === 'R') && !syncing) { e.preventDefault(); runSync(); }
       const pageMap = { '1': 'dashboard', '2': 'rank-radar', '3': 'products', '4': 'keywords', '5': 'alerts', '6': 'settings' };
       if (pageMap[e.key]) setView(pageMap[e.key]);
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [syncing]);
+  }, [syncing, runSync]);
 
   const openAlertCount = alerts.filter((a) => a.status === 'open').length;
   const sharedProps = {

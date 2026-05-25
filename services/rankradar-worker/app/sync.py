@@ -23,22 +23,27 @@ async def run_sync(
     started = datetime.now(timezone.utc)
     sync_run_id = f"sync-{uuid4().hex[:12]}"
     is_live = isinstance(client, HttpDataDiveClient)
+    provider = "live" if is_live else "mock"
 
     try:
-        connection = await client.test_connection()
-        products = await client.list_rank_radar_products(brand_id=brand_id, marketplace=marketplace)
-        brands = await client.list_brands()
-        provider = connection.get("provider", "mock")
-
-        if provider == "mock":
-            store.upsert_seed_data()
-            inserted_alerts = store.rebuild_alerts()
-        else:
+        if is_live:
+            products = await client.list_rank_radar_products(brand_id=brand_id, marketplace=marketplace)
+            # Brands come from /v1/niches — if that endpoint fails, fall back gracefully
+            # so the store can derive brand names from marketplace codes.
+            try:
+                brands = await client.list_brands()
+            except Exception as brand_exc:  # noqa: BLE001
+                print(f"[RankRadar] list_brands failed ({brand_exc}); brands will be derived from marketplace codes.")
+                brands = []
             store.replace_live_rank_radars(products, brands=brands)
             inserted_alerts = 0
+        else:
+            store.upsert_seed_data()
+            inserted_alerts = store.rebuild_alerts()
+            products = []
 
         if is_live:
-            _store_raw_responses(store, client, sync_run_id)  # type: ignore[arg-type]
+            _store_raw_responses(store, client, sync_run_id)
 
         run = store.record_sync_run(
             "success",
@@ -56,7 +61,7 @@ async def run_sync(
 
     except Exception as exc:  # noqa: BLE001 — sync endpoints must always record failure
         if is_live:
-            _store_raw_responses(store, client, sync_run_id)  # type: ignore[arg-type]
+            _store_raw_responses(store, client, sync_run_id)
         run = store.record_sync_run(
             "failed",
             sync_run_id=sync_run_id,

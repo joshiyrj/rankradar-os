@@ -9,14 +9,35 @@ from fastapi.staticfiles import StaticFiles
 
 from .datadive_client import make_client
 from .mongo_store import MongoRankRadarStore
-from .settings import get_settings
+from .settings import get_settings, Settings
 from .store import RankRadarStore
 from .sync import run_sync
 
 settings = get_settings()
-store = MongoRankRadarStore(settings) if settings.datadive_provider.lower() in {"live", "http", "datadive"} else RankRadarStore(settings)
-if settings.datadive_provider.lower() not in {"live", "http", "datadive"}:
-    store.seed_if_empty()
+
+
+def _init_store(s: Settings) -> "RankRadarStore | MongoRankRadarStore":
+    """Return the best available store.
+
+    Tries MongoDB only when MONGODB_URI points to an external host (not localhost).
+    Falls back to SQLite transparently so the app stays alive on Render or any
+    environment without a MongoDB sidecar.
+    """
+    is_live = s.datadive_provider.lower() in {"live", "http", "datadive"}
+    uri = s.mongodb_uri or ""
+    want_mongo = is_live and uri and "localhost" not in uri and "127.0.0.1" not in uri
+    if want_mongo:
+        try:
+            return MongoRankRadarStore(s)
+        except Exception as exc:
+            print(f"[RankRadar] MongoDB unavailable ({exc}). Falling back to SQLite.")
+    store = RankRadarStore(s)
+    if not is_live:
+        store.seed_if_empty()
+    return store
+
+
+store = _init_store(settings)
 client = make_client(settings)
 
 app = FastAPI(title="RankRadar OS Data Service", version="1.0.0")
@@ -33,8 +54,17 @@ WEB_DIST = Path(__file__).resolve().parents[3] / "apps" / "web" / "dist"
 
 @app.on_event("startup")
 async def startup_sync() -> None:
-    if settings.datadive_provider.lower() in {"live", "http", "datadive"} and not store.get_products(None, None):
-        await run_sync(store, client)
+    try:
+        is_live = settings.datadive_provider.lower() in {"live", "http", "datadive"}
+        if is_live and not store.get_products(None, None):
+            print("[RankRadar] No products found — running initial sync...")
+            result = await run_sync(store, client)
+            if result.get("ok"):
+                print(f"[RankRadar] Initial sync complete: {result.get('productsSeen', 0)} products.")
+            else:
+                print(f"[RankRadar] Initial sync failed: {result.get('error')}")
+    except Exception as exc:
+        print(f"[RankRadar] Startup sync skipped: {exc}")
 
 
 @app.get("/health")
