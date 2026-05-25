@@ -10,6 +10,7 @@ from uuid import uuid4
 
 from .alerts import detect_alert, rank_health
 from .demo_data import BRANDS, MARKETPLACES, PRODUCTS, VARIATIONS, KEYWORDS, generate_rank_records
+from .lib.rank_utils import rank_bucket
 from .settings import Settings
 
 SCHEMA = """
@@ -90,6 +91,10 @@ CREATE TABLE IF NOT EXISTS rank_records (
   clicks INTEGER,
   ctr REAL,
   conversion_rate REAL,
+  our_asin_share REAL,
+  our_ctr REAL,
+  our_cvr REAL,
+  rank_bucket TEXT,
   raw_payload TEXT,
   created_at TEXT DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -134,6 +139,39 @@ CREATE TABLE IF NOT EXISTS sync_runs (
   error_message TEXT,
   raw_context TEXT
 );
+CREATE TABLE IF NOT EXISTS keyword_benchmarking_snapshots (
+  id TEXT PRIMARY KEY,
+  product_id TEXT NOT NULL,
+  keyword_id TEXT NOT NULL,
+  marketplace_id TEXT NOT NULL,
+  snapshot_date TEXT NOT NULL,
+  our_asin_share REAL,
+  our_ctr REAL,
+  our_cvr REAL,
+  datadive_source TEXT,
+  raw_payload TEXT,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(product_id, keyword_id, marketplace_id, snapshot_date)
+);
+CREATE TABLE IF NOT EXISTS search_volume_snapshots (
+  id TEXT PRIMARY KEY,
+  keyword_id TEXT NOT NULL,
+  marketplace_id TEXT NOT NULL,
+  snapshot_date TEXT NOT NULL,
+  search_volume INTEGER,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(keyword_id, marketplace_id, snapshot_date)
+);
+CREATE TABLE IF NOT EXISTS raw_api_responses (
+  id TEXT PRIMARY KEY,
+  provider TEXT NOT NULL DEFAULT 'datadive',
+  endpoint TEXT NOT NULL,
+  request_params TEXT,
+  response_body TEXT,
+  status_code INTEGER,
+  sync_run_id TEXT,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 
@@ -156,8 +194,8 @@ class RankRadarStore:
     def init_db(self) -> None:
         with self.connect() as conn:
             conn.executescript(SCHEMA)
-            existing = {row["name"] for row in conn.execute("PRAGMA table_info(products)").fetchall()}
-            additions = {
+            products_cols = {row["name"] for row in conn.execute("PRAGMA table_info(products)").fetchall()}
+            for name, definition in {
                 "datadive_status": "TEXT",
                 "keyword_count": "INTEGER DEFAULT 0",
                 "top10_kw": "INTEGER DEFAULT 0",
@@ -165,10 +203,18 @@ class RankRadarStore:
                 "top50_kw": "INTEGER DEFAULT 0",
                 "top50_sv": "INTEGER DEFAULT 0",
                 "raw_payload": "TEXT",
-            }
-            for name, definition in additions.items():
-                if name not in existing:
+            }.items():
+                if name not in products_cols:
                     conn.execute(f"ALTER TABLE products ADD COLUMN {name} {definition}")
+            rr_cols = {row["name"] for row in conn.execute("PRAGMA table_info(rank_records)").fetchall()}
+            for name, definition in {
+                "our_asin_share": "REAL",
+                "our_ctr": "REAL",
+                "our_cvr": "REAL",
+                "rank_bucket": "TEXT",
+            }.items():
+                if name not in rr_cols:
+                    conn.execute(f"ALTER TABLE rank_records ADD COLUMN {name} {definition}")
 
     def seed_if_empty(self) -> None:
         with self.connect() as conn:
@@ -513,20 +559,19 @@ class RankRadarStore:
                     k.keyword,
                     k.search_volume,
                     rr.rank_date,
-                    rr.organic_rank,
-                    rr.rank_change,
-                    pv.child_asin,
-                    COALESCE(ra.alert_type, '') AS alert_type,
-                    COALESCE(ra.severity, '') AS severity
+                    MIN(rr.organic_rank) AS organic_rank,
+                    AVG(rr.rank_change) AS rank_change,
+                    COALESCE(MAX(ra.alert_type), '') AS alert_type,
+                    COALESCE(MAX(ra.severity), '') AS severity
                 FROM rank_records rr
                 JOIN keywords k ON k.id = rr.keyword_id
-                LEFT JOIN product_variations pv ON pv.id = rr.variation_id
                 LEFT JOIN rank_alerts ra
                     ON ra.product_id = rr.product_id
-                    AND COALESCE(ra.variation_id, '') = COALESCE(rr.variation_id, '')
                     AND ra.keyword_id = rr.keyword_id
+                    AND ra.detected_at = rr.rank_date
                 WHERE rr.product_id = ?{date_filter}
-                ORDER BY k.keyword, rr.rank_date
+                GROUP BY k.id, rr.rank_date
+                ORDER BY k.search_volume DESC, k.keyword, rr.rank_date
             """, params).fetchall()
 
         # Group by keyword
@@ -546,7 +591,6 @@ class RankRadarStore:
                     "our_cvr": None,
                     "dates": [],
                 }
-            from .lib.rank_utils import rank_bucket
             keyword_map[kid]["dates"].append({
                 "date": r["rank_date"],
                 "organic_rank": r["organic_rank"],
@@ -554,6 +598,29 @@ class RankRadarStore:
             })
 
         return sorted(keyword_map.values(), key=lambda x: -(x["search_volume"] or 0))
+
+    def insert_raw_api_response(
+        self,
+        endpoint: str,
+        request_params: dict | None,
+        response_body: Any,
+        status_code: int,
+        sync_run_id: str | None = None,
+        provider: str = "datadive",
+    ) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                "INSERT INTO raw_api_responses(id, provider, endpoint, request_params, response_body, status_code, sync_run_id) VALUES(?,?,?,?,?,?,?)",
+                (
+                    f"raw-{uuid4().hex[:12]}",
+                    provider,
+                    endpoint,
+                    json.dumps(request_params) if request_params is not None else None,
+                    json.dumps(response_body) if response_body is not None else None,
+                    status_code,
+                    sync_run_id,
+                ),
+            )
 
     def alert_rules(self) -> list[dict]:
         with self.connect() as conn:
@@ -578,9 +645,21 @@ class RankRadarStore:
             rows = conn.execute("SELECT * FROM sync_runs ORDER BY started_at DESC LIMIT 25").fetchall()
             return [dict(r) for r in rows]
 
-    def record_sync_run(self, status: str, records_processed: int = 0, error_message: str | None = None, raw_context: dict | None = None) -> dict:
+    def record_sync_run(self, status: str, sync_run_id: str | None = None, records_processed: int = 0, error_message: str | None = None, raw_context: dict | None = None) -> dict:
         now = datetime.now(timezone.utc).isoformat()
-        row = {"id": f"sync-{uuid4().hex[:12]}", "source": "datadive", "status": status, "started_at": now, "completed_at": now, "records_processed": records_processed, "error_message": error_message, "raw_context": json.dumps(raw_context or {})}
+        row = {
+            "id": sync_run_id or f"sync-{uuid4().hex[:12]}",
+            "source": "datadive",
+            "status": status,
+            "started_at": now,
+            "completed_at": now,
+            "records_processed": records_processed,
+            "error_message": error_message,
+            "raw_context": json.dumps(raw_context or {}),
+        }
         with self.connect() as conn:
-            conn.execute("INSERT INTO sync_runs(id, source, status, started_at, completed_at, records_processed, error_message, raw_context) VALUES(?,?,?,?,?,?,?,?)", tuple(row.values()))
+            conn.execute(
+                "INSERT OR REPLACE INTO sync_runs(id, source, status, started_at, completed_at, records_processed, error_message, raw_context) VALUES(?,?,?,?,?,?,?,?)",
+                tuple(row.values()),
+            )
         return row

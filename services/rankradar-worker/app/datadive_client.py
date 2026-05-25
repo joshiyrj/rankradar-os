@@ -91,6 +91,7 @@ class HttpDataDiveClient(BaseDataDiveClient):
         if not settings.datadive_api_base_url:
             raise DataDiveClientError("DATADIVE_API_BASE_URL is required when DATADIVE_PROVIDER=live")
         self.settings = settings
+        self._pending_raw_responses: list[dict[str, Any]] = []
         self.client = httpx.AsyncClient(
             base_url=settings.datadive_api_base_url.rstrip("/"),
             timeout=httpx.Timeout(30.0),
@@ -101,11 +102,29 @@ class HttpDataDiveClient(BaseDataDiveClient):
             },
         )
 
+    def drain_raw_responses(self) -> list[dict[str, Any]]:
+        """Return and clear all pending raw API responses accumulated since last drain."""
+        pending = self._pending_raw_responses[:]
+        self._pending_raw_responses.clear()
+        return pending
+
     async def _get(self, path: str, params: dict[str, Any] | None = None) -> Any:
-        response = await self.client.get(path, params={k: v for k, v in (params or {}).items() if v not in (None, "")})
+        clean_params = {k: v for k, v in (params or {}).items() if v not in (None, "")}
+        response = await self.client.get(path, params=clean_params)
+        body: Any = None
+        try:
+            body = response.json()
+        except Exception:  # noqa: BLE001
+            body = response.text[:2000]
+        self._pending_raw_responses.append({
+            "endpoint": path,
+            "request_params": clean_params,
+            "response_body": body,
+            "status_code": response.status_code,
+        })
         if response.status_code >= 400:
             raise DataDiveClientError(f"DataDive API returned {response.status_code}: {response.text[:500]}")
-        return response.json()
+        return body
 
     def _items(self, payload: Any) -> list[dict[str, Any]]:
         if isinstance(payload, list):

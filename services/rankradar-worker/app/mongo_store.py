@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-from pymongo import ASCENDING, MongoClient, UpdateOne
+from pymongo import ASCENDING, DESCENDING, MongoClient, UpdateOne
 
 from .settings import Settings
 
@@ -148,6 +149,9 @@ class MongoRankRadarStore:
     def keyword_rows(self, product_id: str, q: str | None = None, status: str | None = None, movement: str | None = None) -> list[dict[str, Any]]:
         return []
 
+    def keyword_heatmap(self, product_id: str, start: str | None = None, end: str | None = None) -> list[dict[str, Any]]:
+        return []
+
     def trend(self, product_id: str, keyword_id: str) -> list[dict[str, Any]]:
         return []
 
@@ -155,10 +159,54 @@ class MongoRankRadarStore:
         return []
 
     def alerts(self, filters: dict[str, Any]) -> list[dict[str, Any]]:
-        return []
+        query: dict[str, Any] = {}
+        if filters.get("productId"):
+            query["product_id"] = filters["productId"]
+        if filters.get("severity"):
+            query["severity"] = filters["severity"]
+        if filters.get("status"):
+            query["status"] = filters["status"]
+        rows = list(self.db.rank_alerts.find(query, {"_id": 0}).sort([
+            ("severity_order", ASCENDING),
+            ("detected_at", DESCENDING),
+        ]).limit(200))
+        return [self._clean(r) for r in rows]
 
     def update_alert_status(self, alert_id: str, status: str) -> dict[str, Any] | None:
-        return None
+        now = datetime.now(timezone.utc).isoformat()
+        timestamp_field = {
+            "acknowledged": "acknowledged_at",
+            "reviewed": "acknowledged_at",
+            "ignored": "acknowledged_at",
+            "resolved": "resolved_at",
+        }.get(status, "acknowledged_at")
+        self.db.rank_alerts.update_one(
+            {"id": alert_id},
+            {"$set": {"status": status, timestamp_field: now, "updated_at": now}},
+        )
+        row = self.db.rank_alerts.find_one({"id": alert_id}, {"_id": 0})
+        return self._clean(row)
+
+    def insert_raw_api_response(
+        self,
+        endpoint: str,
+        request_params: dict | None,
+        response_body: Any,
+        status_code: int,
+        sync_run_id: str | None = None,
+        provider: str = "datadive",
+    ) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        self.db.raw_api_responses.insert_one({
+            "id": f"raw-{uuid4().hex[:12]}",
+            "provider": provider,
+            "endpoint": endpoint,
+            "request_params": request_params,
+            "response_body": response_body,
+            "status_code": status_code,
+            "sync_run_id": sync_run_id,
+            "created_at": now,
+        })
 
     def alert_rules(self) -> list[dict[str, Any]]:
         return []
@@ -169,10 +217,10 @@ class MongoRankRadarStore:
     def sync_runs(self) -> list[dict[str, Any]]:
         return [self._clean(row) for row in self.db.sync_runs.find({}, {"_id": 0}).sort("started_at", -1).limit(25)]
 
-    def record_sync_run(self, status: str, records_processed: int = 0, error_message: str | None = None, raw_context: dict | None = None) -> dict[str, Any]:
+    def record_sync_run(self, status: str, sync_run_id: str | None = None, records_processed: int = 0, error_message: str | None = None, raw_context: dict | None = None) -> dict[str, Any]:
         now = datetime.now(timezone.utc).isoformat()
         row = {
-            "id": f"sync-{uuid4().hex[:12]}",
+            "id": sync_run_id or f"sync-{uuid4().hex[:12]}",
             "source": "datadive",
             "status": status,
             "started_at": now,
