@@ -409,31 +409,44 @@ class RankRadarStore:
         with self.connect() as conn:
             product = conn.execute("SELECT * FROM products WHERE id=?", (product_id,)).fetchone()
             latest = conn.execute("""
-                SELECT rr.* FROM rank_records rr
-                JOIN (SELECT variation_id, keyword_id, MAX(rank_date) max_date FROM rank_records WHERE product_id=? GROUP BY variation_id, keyword_id) x
-                ON x.variation_id=rr.variation_id AND x.keyword_id=rr.keyword_id AND x.max_date=rr.rank_date
+                SELECT rr.keyword_id, MIN(rr.organic_rank) AS organic_rank, AVG(rr.rank_change) AS rank_change,
+                       k.search_volume
+                FROM rank_records rr
+                JOIN (SELECT keyword_id, MAX(rank_date) AS max_date FROM rank_records WHERE product_id=? GROUP BY keyword_id) x
+                    ON x.keyword_id=rr.keyword_id AND x.max_date=rr.rank_date
+                LEFT JOIN keywords k ON k.id=rr.keyword_id
                 WHERE rr.product_id=?
+                GROUP BY rr.keyword_id
             """, (product_id, product_id)).fetchall()
             alerts = conn.execute("SELECT severity, status, COUNT(*) c FROM rank_alerts WHERE product_id=? GROUP BY severity, status", (product_id,)).fetchall()
             heatmap = conn.execute("""SELECT rank_date, AVG(organic_rank) avg_rank, SUM(CASE WHEN rank_change > 0 THEN 1 ELSE 0 END) drops FROM rank_records WHERE product_id=? GROUP BY rank_date ORDER BY rank_date""", (product_id,)).fetchall()
+
         changes = [r["rank_change"] for r in latest if r["rank_change"] is not None]
         improved = sum(1 for c in changes if c < 0)
         declined = sum(1 for c in changes if c > 0)
         stable = sum(1 for c in changes if c == 0)
         critical = sum(a["c"] for a in alerts if a["severity"] == "critical" and a["status"] == "open")
+
+        # Compute Top 10 / Top 50 KW count and SV from stored rank records.
+        top10_kw = sum(1 for r in latest if r["organic_rank"] is not None and r["organic_rank"] <= 10)
+        top50_kw = sum(1 for r in latest if r["organic_rank"] is not None and r["organic_rank"] <= 50)
+        top10_sv = sum((r["search_volume"] or 0) for r in latest if r["organic_rank"] is not None and r["organic_rank"] <= 10)
+        top50_sv = sum((r["search_volume"] or 0) for r in latest if r["organic_rank"] is not None and r["organic_rank"] <= 50)
+
         if product and product["raw_payload"]:
+            # Live DataDive data — prefer DataDive-provided summary metrics as source of truth.
             return {
                 "trackedKeywords": int(product["keyword_count"] or 0),
                 "variationSignals": 1,
-                "improved": 0,
-                "declined": 0,
-                "stable": 0,
-                "criticalAlerts": 0,
-                "avgRankChange": 0,
-                "top10KW": int(product["top10_kw"] or 0),
-                "top10SV": int(product["top10_sv"] or 0),
-                "top50KW": int(product["top50_kw"] or 0),
-                "top50SV": int(product["top50_sv"] or 0),
+                "improved": improved,
+                "declined": declined,
+                "stable": stable,
+                "criticalAlerts": critical,
+                "avgRankChange": round(sum(changes) / len(changes), 2) if changes else 0,
+                "top10KW": int(product["top10_kw"] or top10_kw),
+                "top10SV": int(product["top10_sv"] or top10_sv),
+                "top50KW": int(product["top50_kw"] or top50_kw),
+                "top50SV": int(product["top50_sv"] or top50_sv),
                 "status": product["datadive_status"] or "",
                 "source": "datadive",
                 "heatmap": [],
@@ -446,6 +459,10 @@ class RankRadarStore:
             "stable": stable,
             "criticalAlerts": critical,
             "avgRankChange": round(sum(changes) / len(changes), 2) if changes else 0,
+            "top10KW": top10_kw,
+            "top10SV": top10_sv,
+            "top50KW": top50_kw,
+            "top50SV": top50_sv,
             "heatmap": [dict(r) for r in heatmap],
         }
 
