@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import Sidebar from '@/components/layout/Sidebar';
 import TopBar from '@/components/layout/TopBar';
+import ErrorBoundary from '@/components/ErrorBoundary';
 import { api } from './api.js';
 
 // Pages
@@ -11,6 +12,19 @@ import Products from '@/pages/Products';
 import Keywords from '@/pages/Keywords';
 import Alerts from '@/pages/Alerts';
 import Settings from '@/pages/Settings';
+
+function StubPage({ view }) {
+  const labels = {
+    brands: 'Brands', marketplaces: 'Marketplaces',
+    reports: 'Reports', watchlist: 'Watchlist', 'sync-logs': 'Sync & Logs',
+  };
+  return (
+    <div className="flex flex-col items-center justify-center h-64 gap-3 text-center p-8">
+      <p className="text-base font-semibold text-foreground">{labels[view] || view}</p>
+      <p className="text-sm text-muted-foreground">This section is coming soon.</p>
+    </div>
+  );
+}
 
 export default function App() {
   const [view, setView] = useState('dashboard');
@@ -56,6 +70,18 @@ export default function App() {
     if (!filters.brandId) return;
     api.marketplaces(filters.brandId).then(setMarketplaces).catch(console.error);
   }, [filters.brandId]);
+
+  // Keyboard shortcuts: R = sync, 1-6 = nav pages
+  useEffect(() => {
+    function onKey(e) {
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) return;
+      if (e.key === 'r' || e.key === 'R') { e.preventDefault(); runSync(); }
+      const pageMap = { '1': 'dashboard', '2': 'rank-radar', '3': 'products', '4': 'keywords', '5': 'alerts', '6': 'settings' };
+      if (pageMap[e.key]) setView(pageMap[e.key]);
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [syncing]);
 
   async function runSync() {
     setSyncing(true);
@@ -114,12 +140,17 @@ export default function App() {
             syncError={syncError}
           />
           <main className="flex-1 overflow-auto">
-            {view === 'dashboard' && <Dashboard {...sharedProps} />}
-            {view === 'rank-radar' && <RankRadar {...sharedProps} />}
-            {view === 'products' && <Products {...sharedProps} />}
-            {view === 'keywords' && <Keywords {...sharedProps} />}
-            {view === 'alerts' && <Alerts {...sharedProps} refreshAlerts={refreshAlerts} />}
-            {view === 'settings' && <Settings />}
+            <ErrorBoundary key={view}>
+              {view === 'dashboard' && <Dashboard {...sharedProps} />}
+              {view === 'rank-radar' && <RankRadar {...sharedProps} />}
+              {view === 'products' && <Products {...sharedProps} />}
+              {view === 'keywords' && <Keywords {...sharedProps} />}
+              {view === 'alerts' && <Alerts />}
+              {view === 'settings' && <Settings />}
+              {['brands', 'marketplaces', 'reports', 'watchlist', 'sync-logs'].includes(view) && (
+                <StubPage view={view} />
+              )}
+            </ErrorBoundary>
           </main>
         </div>
       </div>

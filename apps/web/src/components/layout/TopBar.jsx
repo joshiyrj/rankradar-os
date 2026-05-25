@@ -7,8 +7,13 @@ const PAGE_TITLES = {
   'rank-radar': 'Rank Radar',
   products: 'Products',
   keywords: 'Keywords',
+  brands: 'Brands',
+  marketplaces: 'Marketplaces',
   alerts: 'Alerts',
+  reports: 'Reports',
+  watchlist: 'Watchlist',
   settings: 'Settings',
+  'sync-logs': 'Sync & Logs',
 };
 
 export default function TopBar({ view, onSync, syncing, lastSyncAt, syncError }) {

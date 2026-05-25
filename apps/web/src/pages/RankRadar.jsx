@@ -1,6 +1,9 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
-import { useReactTable, getCoreRowModel, getSortedRowModel, getFilteredRowModel, getPaginationRowModel, flexRender } from '@tanstack/react-table';
-import { AlertTriangle, ChevronDown, ChevronUp, ChevronsUpDown, Download, Search } from 'lucide-react';
+import {
+  useReactTable, getCoreRowModel, getSortedRowModel,
+  getFilteredRowModel, getPaginationRowModel, flexRender,
+} from '@tanstack/react-table';
+import { AlertTriangle, CalendarDays, ChevronDown, ChevronUp, ChevronsUpDown, Download, Search, X } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -8,7 +11,7 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { cn, formatPct, formatSV, rankBucket } from '@/lib/utils';
+import { cn, formatPct, formatSV, rankBucket, RANK_BUCKET_LABELS } from '@/lib/utils';
 import { api } from '@/api.js';
 
 const TrendChart = lazy(() => import('@/components/TrendChart'));
@@ -26,12 +29,23 @@ const SEVERITY_VARIANT = {
   critical: 'critical', high: 'high', medium: 'medium', low: 'low', positive: 'positive',
 };
 
-function RankCell({ rank }) {
+function RankCell({ rank, date, keyword }) {
   const bucket = rankBucket(rank);
-  return (
-    <div className={cn('text-center rounded px-1 py-0.5 text-xs font-semibold min-w-[32px]', BUCKET_COLORS[bucket])}>
+  const cell = (
+    <div className={cn('text-center rounded px-1 py-0.5 text-xs font-semibold min-w-[32px] cursor-default', BUCKET_COLORS[bucket])}>
       {rank ?? '—'}
     </div>
+  );
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{cell}</TooltipTrigger>
+      <TooltipContent side="top" className="text-left">
+        <p className="font-medium mb-0.5">{keyword}</p>
+        <p className="text-muted-foreground">{date}</p>
+        <p>Rank: <span className="text-foreground font-semibold">{rank ?? 'Not ranking'}</span></p>
+        <p>Bucket: <span className="text-foreground">{RANK_BUCKET_LABELS[bucket] ?? bucket}</span></p>
+      </TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -70,8 +84,20 @@ function exportCSV(rows, dates) {
   a.click();
 }
 
+// Default date range: last 28 days
+function defaultDateRange() {
+  const end = new Date();
+  const start = new Date();
+  start.setDate(end.getDate() - 27);
+  return {
+    start: start.toISOString().slice(0, 10),
+    end: end.toISOString().slice(0, 10),
+  };
+}
+
 export default function RankRadar({ brands, marketplaces, products, alerts, filters, setFilters, loading: globalLoading }) {
   const [localFilters, setLocalFilters] = useState({ brandId: '', marketplace: '', productId: '' });
+  const [dateRange, setDateRange] = useState(defaultDateRange);
   const [localMarketplaces, setLocalMarketplaces] = useState(marketplaces);
   const [localProducts, setLocalProducts] = useState([]);
   const [keywords, setKeywords] = useState([]);
@@ -84,7 +110,6 @@ export default function RankRadar({ brands, marketplaces, products, alerts, filt
   const [kwFilter, setKwFilter] = useState('');
   const [sorting, setSorting] = useState([{ id: 'search_volume', desc: true }]);
 
-  // When brand changes in local filter, refresh marketplaces and products
   useEffect(() => {
     if (!localFilters.brandId) {
       setLocalMarketplaces(marketplaces);
@@ -99,18 +124,18 @@ export default function RankRadar({ brands, marketplaces, products, alerts, filt
       .catch(console.error);
   }, [localFilters.brandId, localFilters.marketplace]);
 
-  // When product is selected, load keywords + heatmap + summary
   useEffect(() => {
     if (!localFilters.productId) {
-      setKeywords([]);
-      setHeatmapData([]);
-      setSummary(null);
+      setKeywords([]); setHeatmapData([]); setSummary(null); setPageAlerts([]); setSelectedKeyword(null);
       return;
     }
     setLoading(true);
+    const heatmapParams = {};
+    if (dateRange.start) heatmapParams.start = dateRange.start;
+    if (dateRange.end) heatmapParams.end = dateRange.end;
     Promise.all([
       api.keywords(localFilters.productId),
-      api.heatmap(localFilters.productId).catch(() => []),
+      api.heatmap(localFilters.productId, heatmapParams).catch(() => []),
       api.summary(localFilters.productId).catch(() => null),
       api.alerts({ productId: localFilters.productId, status: 'open' }).catch(() => []),
     ]).then(([kws, hm, sum, alts]) => {
@@ -119,15 +144,13 @@ export default function RankRadar({ brands, marketplaces, products, alerts, filt
       setSummary(sum);
       setPageAlerts(alts);
     }).catch(console.error).finally(() => setLoading(false));
-  }, [localFilters.productId]);
+  }, [localFilters.productId, dateRange.start, dateRange.end]);
 
-  // Load trend when keyword selected
   useEffect(() => {
     if (!localFilters.productId || !selectedKeyword) return;
     api.trend(localFilters.productId, selectedKeyword.keyword_id).then(setTrend).catch(console.error);
   }, [localFilters.productId, selectedKeyword?.keyword_id]);
 
-  // Derive all date columns from heatmap data or keyword dates
   const dates = useMemo(() => {
     if (heatmapData.length > 0 && heatmapData[0]?.dates) {
       return heatmapData[0].dates.map((d) => d.date).sort();
@@ -137,10 +160,8 @@ export default function RankRadar({ brands, marketplaces, products, alerts, filt
     return [...all].sort();
   }, [heatmapData, keywords]);
 
-  // Build table rows — one per keyword
   const tableRows = useMemo(() => {
     if (heatmapData.length > 0) return heatmapData;
-    // Fallback: build from keywords endpoint (single date per keyword)
     return keywords.map((kw) => ({
       keyword_id: kw.keyword_id,
       keyword: kw.keyword,
@@ -156,14 +177,10 @@ export default function RankRadar({ brands, marketplaces, products, alerts, filt
     }));
   }, [heatmapData, keywords]);
 
-  // TanStack Table columns
   const columns = useMemo(() => {
     const fixed = [
       {
-        id: 'keyword',
-        accessorKey: 'keyword',
-        header: 'Keyword',
-        size: 220,
+        id: 'keyword', accessorKey: 'keyword', header: 'Keyword', size: 220,
         cell: ({ row }) => (
           <button
             className="text-left hover:text-primary transition-colors font-medium text-sm"
@@ -174,17 +191,11 @@ export default function RankRadar({ brands, marketplaces, products, alerts, filt
         ),
       },
       {
-        id: 'search_volume',
-        accessorKey: 'search_volume',
-        header: 'Search Vol',
-        size: 90,
+        id: 'search_volume', accessorKey: 'search_volume', header: 'Search Vol', size: 90,
         cell: ({ getValue }) => <span className="text-sm text-muted-foreground">{formatSV(getValue())}</span>,
       },
       {
-        id: 'rank_change',
-        accessorKey: 'rank_change',
-        header: 'Change',
-        size: 70,
+        id: 'rank_change', accessorKey: 'rank_change', header: 'Change', size: 70,
         cell: ({ getValue }) => {
           const v = getValue();
           if (v == null) return <span className="text-muted-foreground text-xs">—</span>;
@@ -201,7 +212,7 @@ export default function RankRadar({ brands, marketplaces, products, alerts, filt
       size: 52,
       cell: ({ row }) => {
         const entry = row.original.dates?.find((x) => x.date === d);
-        return <RankCell rank={entry?.organic_rank ?? null} />;
+        return <RankCell rank={entry?.organic_rank ?? null} date={d} keyword={row.original.keyword} />;
       },
       accessorFn: (row) => {
         const entry = row.dates?.find((x) => x.date === d);
@@ -210,33 +221,16 @@ export default function RankRadar({ brands, marketplaces, products, alerts, filt
     }));
 
     const sqpCols = [
-      {
-        id: 'our_asin_share',
-        accessorKey: 'our_asin_share',
-        header: 'ASIN Share',
-        size: 90,
-        cell: ({ getValue }) => <span className="text-xs">{formatPct(getValue())}</span>,
-      },
-      {
-        id: 'our_ctr',
-        accessorKey: 'our_ctr',
-        header: 'CTR',
-        size: 70,
-        cell: ({ getValue }) => <span className="text-xs">{formatPct(getValue())}</span>,
-      },
-      {
-        id: 'our_cvr',
-        accessorKey: 'our_cvr',
-        header: 'CVR',
-        size: 70,
-        cell: ({ getValue }) => <span className="text-xs">{formatPct(getValue())}</span>,
-      },
+      { id: 'our_asin_share', accessorKey: 'our_asin_share', header: 'ASIN Share', size: 90,
+        cell: ({ getValue }) => <span className="text-xs">{formatPct(getValue())}</span> },
+      { id: 'our_ctr', accessorKey: 'our_ctr', header: 'CTR', size: 70,
+        cell: ({ getValue }) => <span className="text-xs">{formatPct(getValue())}</span> },
+      { id: 'our_cvr', accessorKey: 'our_cvr', header: 'CVR', size: 70,
+        cell: ({ getValue }) => <span className="text-xs">{formatPct(getValue())}</span> },
     ];
 
     const alertCol = {
-      id: 'alert',
-      header: 'Alert',
-      size: 110,
+      id: 'alert', header: 'Alert', size: 110,
       cell: ({ row }) => {
         const { alert_type, severity } = row.original;
         if (!alert_type) return <span className="text-xs text-muted-foreground">—</span>;
@@ -252,8 +246,7 @@ export default function RankRadar({ brands, marketplaces, products, alerts, filt
   }, [dates]);
 
   const table = useReactTable({
-    data: tableRows,
-    columns,
+    data: tableRows, columns,
     state: { sorting, globalFilter: kwFilter },
     onSortingChange: setSorting,
     onGlobalFilterChange: setKwFilter,
@@ -266,6 +259,9 @@ export default function RankRadar({ brands, marketplaces, products, alerts, filt
 
   const selectedProduct = localProducts.find((p) => p.id === localFilters.productId);
   const criticalCount = pageAlerts.filter((a) => a.severity === 'critical').length;
+
+  const isDateRangeDefault =
+    dateRange.start === defaultDateRange().start && dateRange.end === defaultDateRange().end;
 
   return (
     <div className="p-6 space-y-5 max-w-full">
@@ -309,6 +305,39 @@ export default function RankRadar({ brands, marketplaces, products, alerts, filt
             </SelectContent>
           </Select>
         </div>
+
+        {/* Date range picker */}
+        <div className="space-y-1">
+          <label className="text-xs text-muted-foreground font-medium flex items-center gap-1">
+            <CalendarDays className="w-3 h-3" /> Date Range
+          </label>
+          <div className="flex items-center gap-1.5">
+            <input
+              type="date"
+              value={dateRange.start}
+              max={dateRange.end || undefined}
+              onChange={(e) => setDateRange((r) => ({ ...r, start: e.target.value }))}
+              className="h-9 rounded-md border border-input bg-transparent px-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+            />
+            <span className="text-xs text-muted-foreground">to</span>
+            <input
+              type="date"
+              value={dateRange.end}
+              min={dateRange.start || undefined}
+              onChange={(e) => setDateRange((r) => ({ ...r, end: e.target.value }))}
+              className="h-9 rounded-md border border-input bg-transparent px-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+            />
+            {!isDateRangeDefault && (
+              <button
+                onClick={() => setDateRange(defaultDateRange())}
+                className="text-muted-foreground hover:text-foreground transition-colors"
+                title="Reset to last 28 days"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+        </div>
       </div>
 
       {!localFilters.productId && (
@@ -330,11 +359,11 @@ export default function RankRadar({ brands, marketplaces, products, alerts, filt
         <>
           {/* KPI Cards */}
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3">
-            <KPICard title="Top 10 KW" value={selectedProduct?.top10_kw ?? summary?.top10_kw ?? '—'} />
-            <KPICard title="Top 50 KW" value={selectedProduct?.top50_kw ?? summary?.top50_kw ?? '—'} />
-            <KPICard title="Top 10 SV" value={formatSV(selectedProduct?.top10_sv ?? summary?.top10_sv)} />
-            <KPICard title="Top 50 SV" value={formatSV(selectedProduct?.top50_sv ?? summary?.top50_sv)} />
-            <KPICard title="Keywords" value={keywords.length} />
+            <KPICard title="Top 10 KW" value={summary?.top10KW ?? selectedProduct?.top10_kw ?? '—'} />
+            <KPICard title="Top 50 KW" value={summary?.top50KW ?? selectedProduct?.top50_kw ?? '—'} />
+            <KPICard title="Top 10 SV" value={formatSV(summary?.top10SV ?? selectedProduct?.top10_sv)} />
+            <KPICard title="Top 50 SV" value={formatSV(summary?.top50SV ?? selectedProduct?.top50_sv)} />
+            <KPICard title="Keywords" value={tableRows.length} />
             <KPICard
               title="Critical Alerts"
               value={criticalCount}
@@ -345,7 +374,6 @@ export default function RankRadar({ brands, marketplaces, products, alerts, filt
           <div className="grid grid-cols-1 xl:grid-cols-4 gap-5">
             {/* Main heatmap area */}
             <div className="xl:col-span-3 space-y-4">
-              {/* Keyword search + export */}
               <div className="flex items-center gap-2">
                 <div className="relative flex-1 max-w-xs">
                   <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
@@ -357,8 +385,7 @@ export default function RankRadar({ brands, marketplaces, products, alerts, filt
                   />
                 </div>
                 <Button
-                  variant="outline"
-                  size="sm"
+                  variant="outline" size="sm"
                   onClick={() => exportCSV(table.getFilteredRowModel().rows.map((r) => r.original), dates)}
                   className="gap-1.5 h-8 text-xs"
                 >
@@ -431,19 +458,15 @@ export default function RankRadar({ brands, marketplaces, products, alerts, filt
                     {kwFilter && ` matching "${kwFilter}"`}
                   </span>
                   <div className="flex items-center gap-2">
-                    <Button variant="outline" size="sm" onClick={() => table.previousPage()} disabled={!table.getCanPreviousPage()} className="h-7 text-xs">
-                      Prev
-                    </Button>
-                    <span>Page {table.getState().pagination.pageIndex + 1} / {table.getPageCount()}</span>
-                    <Button variant="outline" size="sm" onClick={() => table.nextPage()} disabled={!table.getCanNextPage()} className="h-7 text-xs">
-                      Next
-                    </Button>
+                    <Button variant="outline" size="sm" onClick={() => table.previousPage()} disabled={!table.getCanPreviousPage()} className="h-7 text-xs">Prev</Button>
+                    <span>Page {table.getState().pagination.pageIndex + 1} / {Math.max(1, table.getPageCount())}</span>
+                    <Button variant="outline" size="sm" onClick={() => table.nextPage()} disabled={!table.getCanNextPage()} className="h-7 text-xs">Next</Button>
                   </div>
                 </div>
               </Card>
 
               {/* Rank color legend */}
-              <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+              <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
                 <span className="font-medium">Rank buckets:</span>
                 {[
                   ['excellent', '1–3'],
@@ -454,7 +477,7 @@ export default function RankRadar({ brands, marketplaces, products, alerts, filt
                   ['not_ranking', 'NR'],
                 ].map(([bucket, label]) => (
                   <span key={bucket} className="flex items-center gap-1">
-                    <span className={cn('inline-block w-4 h-4 rounded text-[10px] flex items-center justify-center', BUCKET_COLORS[bucket])} />
+                    <span className={cn('inline-block w-5 h-4 rounded text-[10px] flex items-center justify-center', BUCKET_COLORS[bucket])} />
                     {label}
                   </span>
                 ))}
@@ -464,8 +487,14 @@ export default function RankRadar({ brands, marketplaces, products, alerts, filt
               {selectedKeyword && trend.length > 0 && (
                 <Card>
                   <CardHeader>
-                    <CardTitle className="text-sm">
-                      Rank Trend — {selectedKeyword.keyword}
+                    <CardTitle className="text-sm flex items-center justify-between">
+                      <span>Rank Trend — {selectedKeyword.keyword}</span>
+                      <button
+                        className="text-muted-foreground hover:text-foreground transition-colors"
+                        onClick={() => { setSelectedKeyword(null); setTrend([]); }}
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
@@ -482,11 +511,11 @@ export default function RankRadar({ brands, marketplaces, products, alerts, filt
               <Card className="sticky top-4">
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
-                    <AlertTriangle className="w-4 h-4" /> Alerts
+                    <AlertTriangle className="w-4 h-4" /> Open Alerts
                     {criticalCount > 0 && <Badge variant="critical" className="ml-auto">{criticalCount}</Badge>}
                   </CardTitle>
                 </CardHeader>
-                <CardContent className="space-y-2 max-h-[600px] overflow-y-auto">
+                <CardContent className="space-y-2 max-h-[600px] overflow-y-auto p-3">
                   {pageAlerts.slice(0, 30).map((a) => (
                     <div key={a.id} className="border-b border-border/50 pb-2 last:border-0">
                       <div className="flex items-start gap-2">
