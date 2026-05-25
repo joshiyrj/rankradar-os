@@ -579,19 +579,26 @@ class RankRadarStore:
                     MIN(rr.organic_rank) AS organic_rank,
                     AVG(rr.rank_change) AS rank_change,
                     COALESCE(MAX(ra.alert_type), '') AS alert_type,
-                    COALESCE(MAX(ra.severity), '') AS severity
+                    COALESCE(MAX(ra.severity), '') AS severity,
+                    kbs.our_asin_share,
+                    kbs.our_ctr,
+                    kbs.our_cvr
                 FROM rank_records rr
                 JOIN keywords k ON k.id = rr.keyword_id
                 LEFT JOIN rank_alerts ra
                     ON ra.product_id = rr.product_id
                     AND ra.keyword_id = rr.keyword_id
                     AND ra.detected_at = rr.rank_date
+                LEFT JOIN keyword_benchmarking_snapshots kbs
+                    ON kbs.product_id = rr.product_id
+                    AND kbs.keyword_id = rr.keyword_id
+                    AND kbs.snapshot_date = rr.rank_date
                 WHERE rr.product_id = ?{date_filter}
                 GROUP BY k.id, rr.rank_date
                 ORDER BY k.search_volume DESC, k.keyword, rr.rank_date
             """, params).fetchall()
 
-        # Group by keyword
+        # Group by keyword; most-recent date's SQP values bubble up to the keyword row.
         keyword_map: dict[str, dict] = {}
         for r in raw:
             kid = r["keyword_id"]
@@ -603,18 +610,61 @@ class RankRadarStore:
                     "rank_change": r["rank_change"],
                     "alert_type": r["alert_type"] or None,
                     "severity": r["severity"] or None,
-                    "our_asin_share": None,
-                    "our_ctr": None,
-                    "our_cvr": None,
+                    "our_asin_share": r["our_asin_share"],
+                    "our_ctr": r["our_ctr"],
+                    "our_cvr": r["our_cvr"],
                     "dates": [],
                 }
+            else:
+                # Overwrite with the latest non-null SQP values seen.
+                if r["our_asin_share"] is not None:
+                    keyword_map[kid]["our_asin_share"] = r["our_asin_share"]
+                if r["our_ctr"] is not None:
+                    keyword_map[kid]["our_ctr"] = r["our_ctr"]
+                if r["our_cvr"] is not None:
+                    keyword_map[kid]["our_cvr"] = r["our_cvr"]
             keyword_map[kid]["dates"].append({
                 "date": r["rank_date"],
                 "organic_rank": r["organic_rank"],
                 "rank_bucket": rank_bucket(r["organic_rank"]),
+                "our_asin_share": r["our_asin_share"],
+                "our_ctr": r["our_ctr"],
+                "our_cvr": r["our_cvr"],
             })
 
         return sorted(keyword_map.values(), key=lambda x: -(x["search_volume"] or 0))
+
+    def upsert_keyword_benchmarking_snapshot(
+        self,
+        product_id: str,
+        keyword_id: str,
+        marketplace_id: str,
+        snapshot_date: str,
+        our_asin_share: float | None = None,
+        our_ctr: float | None = None,
+        our_cvr: float | None = None,
+        datadive_source: str | None = None,
+        raw_payload: dict | None = None,
+    ) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """INSERT INTO keyword_benchmarking_snapshots
+                   (id, product_id, keyword_id, marketplace_id, snapshot_date,
+                    our_asin_share, our_ctr, our_cvr, datadive_source, raw_payload)
+                   VALUES(?,?,?,?,?,?,?,?,?,?)
+                   ON CONFLICT(product_id, keyword_id, marketplace_id, snapshot_date)
+                   DO UPDATE SET our_asin_share=excluded.our_asin_share,
+                                 our_ctr=excluded.our_ctr,
+                                 our_cvr=excluded.our_cvr,
+                                 datadive_source=excluded.datadive_source,
+                                 raw_payload=excluded.raw_payload""",
+                (
+                    f"kbs-{uuid4().hex[:12]}",
+                    product_id, keyword_id, marketplace_id, snapshot_date,
+                    our_asin_share, our_ctr, our_cvr, datadive_source,
+                    json.dumps(raw_payload) if raw_payload is not None else None,
+                ),
+            )
 
     def insert_raw_api_response(
         self,

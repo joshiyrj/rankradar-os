@@ -187,6 +187,37 @@ class MongoRankRadarStore:
         row = self.db.rank_alerts.find_one({"id": alert_id}, {"_id": 0})
         return self._clean(row)
 
+    def upsert_keyword_benchmarking_snapshot(
+        self,
+        product_id: str,
+        keyword_id: str,
+        marketplace_id: str,
+        snapshot_date: str,
+        our_asin_share: float | None = None,
+        our_ctr: float | None = None,
+        our_cvr: float | None = None,
+        datadive_source: str | None = None,
+        raw_payload: dict | None = None,
+    ) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        doc = {
+            "product_id": product_id,
+            "keyword_id": keyword_id,
+            "marketplace_id": marketplace_id,
+            "snapshot_date": snapshot_date,
+            "our_asin_share": our_asin_share,
+            "our_ctr": our_ctr,
+            "our_cvr": our_cvr,
+            "datadive_source": datadive_source,
+            "raw_payload": raw_payload,
+            "updated_at": now,
+        }
+        self.db.keyword_benchmarking_snapshots.update_one(
+            {"product_id": product_id, "keyword_id": keyword_id, "marketplace_id": marketplace_id, "snapshot_date": snapshot_date},
+            {"$set": doc, "$setOnInsert": {"id": f"kbs-{uuid4().hex[:12]}", "created_at": now}},
+            upsert=True,
+        )
+
     def insert_raw_api_response(
         self,
         endpoint: str,

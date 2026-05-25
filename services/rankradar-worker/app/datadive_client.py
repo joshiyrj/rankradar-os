@@ -186,6 +186,36 @@ class HttpDataDiveClient(BaseDataDiveClient):
         return self._items(await self._get(path, {"marketplace": marketplace, "dateFrom": date_from, "dateTo": date_to}))
 
 
+def extract_sqp_fields(item: dict[str, Any]) -> dict[str, float | None]:
+    """Extract Our ASIN Share / CTR / CVR from a DataDive API item.
+
+    Tries multiple known field name conventions. Values are stored as decimals
+    (0.125 = 12.5%). Returns None for each field when not found.
+
+    DataDive field name candidates (update when confirmed against live API):
+      our_asin_share: ourAsinShare, our_asin_share, asinShare, sqpAsinShare, clickShare
+      our_ctr:        ourCtr, our_ctr, ctrOur, sqpCtr
+      our_cvr:        ourCvr, our_cvr, cvrOur, sqpCvr, conversionRate
+    """
+    def _pick(keys: list[str]) -> float | None:
+        for k in keys:
+            v = item.get(k)
+            if v is not None:
+                try:
+                    f = float(v)
+                    # Normalize: if stored as percentage (e.g. 12.5) convert to decimal (0.125)
+                    return f / 100.0 if f > 1.0 else f
+                except (TypeError, ValueError):
+                    pass
+        return None
+
+    return {
+        "our_asin_share": _pick(["ourAsinShare", "our_asin_share", "asinShare", "sqpAsinShare", "clickShare"]),
+        "our_ctr": _pick(["ourCtr", "our_ctr", "ctrOur", "sqpCtr"]),
+        "our_cvr": _pick(["ourCvr", "our_cvr", "cvrOur", "sqpCvr"]),
+    }
+
+
 def make_client(settings: Settings) -> BaseDataDiveClient:
     if settings.datadive_provider.lower() in {"live", "http", "datadive"}:
         return HttpDataDiveClient(settings)
