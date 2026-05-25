@@ -1,0 +1,60 @@
+@import "tailwindcss";
+@plugin "tailwindcss-animate";
+
+@theme {
+  --color-background: hsl(222 47% 9%);
+  --color-foreground: hsl(213 31% 91%);
+  --color-card: hsl(222 47% 11%);
+  --color-card-foreground: hsl(213 31% 91%);
+  --color-popover: hsl(222 47% 11%);
+  --color-popover-foreground: hsl(213 31% 91%);
+  --color-primary: hsl(217 91% 60%);
+  --color-primary-foreground: hsl(222 47% 9%);
+  --color-secondary: hsl(222 47% 15%);
+  --color-secondary-foreground: hsl(213 31% 91%);
+  --color-muted: hsl(222 47% 15%);
+  --color-muted-foreground: hsl(215 20% 55%);
+  --color-accent: hsl(217 91% 60%);
+  --color-accent-foreground: hsl(222 47% 9%);
+  --color-destructive: hsl(0 72% 51%);
+  --color-destructive-foreground: hsl(210 40% 98%);
+  --color-border: hsl(222 47% 18%);
+  --color-input: hsl(222 47% 15%);
+  --color-ring: hsl(217 91% 60%);
+
+  --radius: 0.5rem;
+  --radius-sm: calc(var(--radius) - 2px);
+  --radius-md: calc(var(--radius) - 0px);
+  --radius-lg: calc(var(--radius) + 2px);
+}
+
+/* CSS vars also exposed for non-Tailwind usage (e.g. inline styles, recharts) */
+:root {
+  --rank-excellent:   #16a34a;
+  --rank-strong:      #4ade80;
+  --rank-near-top10:  #facc15;
+  --rank-weak:        #fb923c;
+  --rank-poor:        #ef4444;
+  --rank-not-ranking: #4b5563;
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+    box-sizing: border-box;
+  }
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+}
+
+/* Rank bucket cell colours for the heatmap table */
+.rank-cell-excellent   { background-color: var(--rank-excellent);   color: #fff; }
+.rank-cell-strong      { background-color: var(--rank-strong);      color: #052e16; }
+.rank-cell-near_top10  { background-color: var(--rank-near-top10);  color: #1c1917; }
+.rank-cell-weak        { background-color: var(--rank-weak);        color: #fff; }
+.rank-cell-poor        { background-color: var(--rank-poor);        color: #fff; }
+.rank-cell-not_ranking { background-color: var(--rank-not-ranking); color: #d1d5db; }

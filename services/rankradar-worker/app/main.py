@@ -207,6 +207,46 @@ def api_resolve(alert_id: str) -> dict[str, Any]:
     return resolve(alert_id)
 
 
+@app.post("/rank-radar/alerts/{alert_id}/review")
+def review(alert_id: str) -> dict[str, Any]:
+    row = store.update_alert_status(alert_id, "reviewed")
+    if not row:
+        raise HTTPException(status_code=404, detail="Alert not found")
+    return row
+
+
+@app.post("/api/rank-radar/alerts/{alert_id}/review")
+def api_review(alert_id: str) -> dict[str, Any]:
+    return review(alert_id)
+
+
+@app.post("/rank-radar/alerts/{alert_id}/ignore")
+def ignore(alert_id: str) -> dict[str, Any]:
+    row = store.update_alert_status(alert_id, "ignored")
+    if not row:
+        raise HTTPException(status_code=404, detail="Alert not found")
+    return row
+
+
+@app.post("/api/rank-radar/alerts/{alert_id}/ignore")
+def api_ignore(alert_id: str) -> dict[str, Any]:
+    return ignore(alert_id)
+
+
+@app.get("/rank-radar/products/{product_id}/heatmap")
+def product_heatmap(
+    product_id: str,
+    start: str | None = None,
+    end: str | None = None,
+) -> list[dict[str, Any]]:
+    return store.keyword_heatmap(product_id, start, end)
+
+
+@app.get("/api/rank-radar/products/{product_id}/heatmap")
+def api_product_heatmap(product_id: str, start: str | None = None, end: str | None = None) -> list[dict[str, Any]]:
+    return product_heatmap(product_id, start, end)
+
+
 @app.get("/rank-radar/alert-rules")
 def alert_rules() -> list[dict[str, Any]]:
     return store.alert_rules()

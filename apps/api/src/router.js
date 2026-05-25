@@ -71,6 +71,12 @@ export async function routeRequest(req, config) {
     return proxyToPython(config, `/rank-radar/products/${productMatch[1]}${qs(url)}`);
   }
 
+  const heatmapMatch = path.match(/^\/api\/rank-radar\/products\/([^/]+)\/heatmap$/);
+  if (heatmapMatch) {
+    assertMethod(req, 'GET');
+    return proxyToPython(config, `/rank-radar/products/${heatmapMatch[1]}/heatmap${qs(url)}`);
+  }
+
   const summaryMatch = path.match(/^\/api\/rank-radar\/products\/([^/]+)\/summary$/);
   if (summaryMatch) {
     assertMethod(req, 'GET');
@@ -95,7 +101,7 @@ export async function routeRequest(req, config) {
     return proxyToPython(config, `/rank-radar/products/${variationsMatch[1]}/keywords/${variationsMatch[2]}/variations${qs(url)}`);
   }
 
-  const alertActionMatch = path.match(/^\/api\/rank-radar\/alerts\/([^/]+)\/(acknowledge|resolve)$/);
+  const alertActionMatch = path.match(/^\/api\/rank-radar\/alerts\/([^/]+)\/(acknowledge|resolve|review|ignore)$/);
   if (alertActionMatch) {
     assertMethod(req, 'POST');
     return proxyToPython(config, `/rank-radar/alerts/${alertActionMatch[1]}/${alertActionMatch[2]}`, { method: 'POST' });

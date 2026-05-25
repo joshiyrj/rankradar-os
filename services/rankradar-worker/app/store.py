@@ -464,11 +464,81 @@ class RankRadarStore:
 
     def update_alert_status(self, alert_id: str, status: str) -> dict | None:
         now = datetime.now(timezone.utc).isoformat()
-        field = "acknowledged_at" if status == "acknowledged" else "resolved_at"
+        # Map each status to the timestamp column it sets
+        timestamp_field = {
+            "acknowledged": "acknowledged_at",
+            "reviewed": "acknowledged_at",
+            "ignored": "acknowledged_at",
+            "resolved": "resolved_at",
+        }.get(status, "acknowledged_at")
         with self.connect() as conn:
-            conn.execute(f"UPDATE rank_alerts SET status=?, {field}=?, updated_at=CURRENT_TIMESTAMP WHERE id=?", (status, now, alert_id))
+            conn.execute(f"UPDATE rank_alerts SET status=?, {timestamp_field}=?, updated_at=CURRENT_TIMESTAMP WHERE id=?", (status, now, alert_id))
             row = conn.execute("SELECT * FROM rank_alerts WHERE id=?", (alert_id,)).fetchone()
             return dict(row) if row else None
+
+    def keyword_heatmap(self, product_id: str, start: str | None = None, end: str | None = None) -> list[dict]:
+        """Return keyword × date rank data for the heatmap table.
+
+        Each row in the result represents one keyword with its daily organic ranks
+        across the requested date range.
+        """
+        params: list[Any] = [product_id]
+        date_filter = ""
+        if start:
+            date_filter += " AND rr.rank_date >= ?"
+            params.append(start)
+        if end:
+            date_filter += " AND rr.rank_date <= ?"
+            params.append(end)
+
+        with self.connect() as conn:
+            raw = conn.execute(f"""
+                SELECT
+                    k.id AS keyword_id,
+                    k.keyword,
+                    k.search_volume,
+                    rr.rank_date,
+                    rr.organic_rank,
+                    rr.rank_change,
+                    pv.child_asin,
+                    COALESCE(ra.alert_type, '') AS alert_type,
+                    COALESCE(ra.severity, '') AS severity
+                FROM rank_records rr
+                JOIN keywords k ON k.id = rr.keyword_id
+                LEFT JOIN product_variations pv ON pv.id = rr.variation_id
+                LEFT JOIN rank_alerts ra
+                    ON ra.product_id = rr.product_id
+                    AND COALESCE(ra.variation_id, '') = COALESCE(rr.variation_id, '')
+                    AND ra.keyword_id = rr.keyword_id
+                WHERE rr.product_id = ?{date_filter}
+                ORDER BY k.keyword, rr.rank_date
+            """, params).fetchall()
+
+        # Group by keyword
+        keyword_map: dict[str, dict] = {}
+        for r in raw:
+            kid = r["keyword_id"]
+            if kid not in keyword_map:
+                keyword_map[kid] = {
+                    "keyword_id": kid,
+                    "keyword": r["keyword"],
+                    "search_volume": r["search_volume"],
+                    "rank_change": r["rank_change"],
+                    "alert_type": r["alert_type"] or None,
+                    "severity": r["severity"] or None,
+                    "our_asin_share": None,
+                    "our_ctr": None,
+                    "our_cvr": None,
+                    "dates": [],
+                }
+            from .lib.rank_utils import rank_bucket
+            keyword_map[kid]["dates"].append({
+                "date": r["rank_date"],
+                "organic_rank": r["organic_rank"],
+                "rank_bucket": rank_bucket(r["organic_rank"]),
+            })
+
+        return sorted(keyword_map.values(), key=lambda x: -(x["search_volume"] or 0))
 
     def alert_rules(self) -> list[dict]:
         with self.connect() as conn:

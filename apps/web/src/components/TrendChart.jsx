@@ -1,29 +1,45 @@
-import { Area, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis, Line, ComposedChart, Bar } from 'recharts';
+import { Area, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis, ComposedChart } from 'recharts';
 
 export default function TrendChart({ data = [] }) {
   return (
-    <section className="panel chart-panel">
-      <div className="panel-heading">
-        <div>
-          <span className="eyebrow">Trend</span>
-          <h2>Rank + PPC</h2>
-        </div>
-        <p>Lower rank is better.</p>
-      </div>
-      <div className="chart-box">
-        <ResponsiveContainer width="100%" height={310}>
-          <ComposedChart data={data} margin={{ top: 10, right: 20, left: -15, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" vertical={false} />
-            <XAxis dataKey="rank_date" tick={{ fontSize: 11 }} minTickGap={24} />
-            <YAxis yAxisId="rank" reversed tick={{ fontSize: 11 }} />
-            <YAxis yAxisId="spend" orientation="right" tick={{ fontSize: 11 }} />
-            <Tooltip />
-            <Area yAxisId="rank" type="monotone" dataKey="organic_rank" name="Organic rank" strokeWidth={3} fillOpacity={0.12} />
-            <Line yAxisId="rank" type="monotone" dataKey="sponsored_rank" name="Sponsored rank" strokeWidth={2} dot={false} />
-            <Bar yAxisId="spend" dataKey="ppc_spend" name="PPC spend" barSize={8} opacity={0.25} />
-          </ComposedChart>
-        </ResponsiveContainer>
-      </div>
-    </section>
+    <ResponsiveContainer width="100%" height={260}>
+      <ComposedChart data={data} margin={{ top: 8, right: 16, left: -20, bottom: 0 }}>
+        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(222 47% 18%)" />
+        <XAxis
+          dataKey="rank_date"
+          tick={{ fontSize: 10, fill: 'hsl(215 20% 55%)' }}
+          minTickGap={24}
+          axisLine={false}
+          tickLine={false}
+        />
+        <YAxis
+          reversed
+          tick={{ fontSize: 10, fill: 'hsl(215 20% 55%)' }}
+          axisLine={false}
+          tickLine={false}
+          label={{ value: 'Rank', angle: -90, position: 'insideLeft', fontSize: 10, fill: 'hsl(215 20% 55%)' }}
+        />
+        <Tooltip
+          contentStyle={{
+            backgroundColor: 'hsl(222 47% 11%)',
+            border: '1px solid hsl(222 47% 18%)',
+            borderRadius: '6px',
+            fontSize: '11px',
+            color: 'hsl(213 31% 91%)',
+          }}
+          formatter={(value, name) => [value != null ? `#${value}` : 'NR', name]}
+        />
+        <Area
+          type="monotone"
+          dataKey="organic_rank"
+          name="Organic rank"
+          stroke="hsl(217 91% 60%)"
+          strokeWidth={2}
+          fill="hsl(217 91% 60%)"
+          fillOpacity={0.08}
+          connectNulls={false}
+        />
+      </ComposedChart>
+    </ResponsiveContainer>
   );
 }
