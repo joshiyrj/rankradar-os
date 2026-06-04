@@ -9,14 +9,35 @@ from fastapi.staticfiles import StaticFiles
 
 from .datadive_client import make_client
 from .mongo_store import MongoRankRadarStore
-from .settings import get_settings
+from .settings import get_settings, Settings
 from .store import RankRadarStore
 from .sync import run_sync
 
 settings = get_settings()
-store = MongoRankRadarStore(settings) if settings.datadive_provider.lower() in {"live", "http", "datadive"} else RankRadarStore(settings)
-if settings.datadive_provider.lower() not in {"live", "http", "datadive"}:
-    store.seed_if_empty()
+
+
+def _init_store(s: Settings) -> "RankRadarStore | MongoRankRadarStore":
+    """Return the best available store.
+
+    Tries MongoDB only when MONGODB_URI points to an external host (not localhost).
+    Falls back to SQLite transparently so the app stays alive on Render or any
+    environment without a MongoDB sidecar.
+    """
+    is_live = s.datadive_provider.lower() in {"live", "http", "datadive"}
+    uri = s.mongodb_uri or ""
+    want_mongo = is_live and uri and "localhost" not in uri and "127.0.0.1" not in uri
+    if want_mongo:
+        try:
+            return MongoRankRadarStore(s)
+        except Exception as exc:
+            print(f"[RankRadar] MongoDB unavailable ({exc}). Falling back to SQLite.")
+    store = RankRadarStore(s)
+    if not is_live:
+        store.seed_if_empty()
+    return store
+
+
+store = _init_store(settings)
 client = make_client(settings)
 
 app = FastAPI(title="RankRadar OS Data Service", version="1.0.0")
@@ -33,8 +54,17 @@ WEB_DIST = Path(__file__).resolve().parents[3] / "apps" / "web" / "dist"
 
 @app.on_event("startup")
 async def startup_sync() -> None:
-    if settings.datadive_provider.lower() in {"live", "http", "datadive"} and not store.get_products(None, None):
-        await run_sync(store, client)
+    try:
+        is_live = settings.datadive_provider.lower() in {"live", "http", "datadive"}
+        if is_live and not store.get_products(None, None):
+            print("[RankRadar] No products found — running initial sync...")
+            result = await run_sync(store, client)
+            if result.get("ok"):
+                print(f"[RankRadar] Initial sync complete: {result.get('productsSeen', 0)} products.")
+            else:
+                print(f"[RankRadar] Initial sync failed: {result.get('error')}")
+    except Exception as exc:
+        print(f"[RankRadar] Startup sync skipped: {exc}")
 
 
 @app.get("/health")
@@ -63,6 +93,36 @@ def api_datadive_status() -> dict[str, Any]:
     return datadive_status()
 
 
+@app.get("/api/datadive/debug/niches")
+async def debug_niches() -> dict[str, Any]:
+    """Return the raw /v1/niches response so we can inspect the field structure."""
+    from .datadive_client import HttpDataDiveClient
+    if not isinstance(client, HttpDataDiveClient):
+        return {"ok": False, "error": "Only available in live mode"}
+    try:
+        payload = await client._get(client.settings.endpoint_brands, {"currentPage": 1, "pageSize": 10, "status": "ALL"})
+        return {"ok": True, "endpoint": client.settings.endpoint_brands, "raw": payload}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": str(exc)}
+
+
+@app.get("/api/datadive/debug/raw-product")
+def debug_raw_product() -> dict[str, Any]:
+    """Return the raw_payload of the first synced product so we can see what niche fields exist."""
+    import json
+    products_list = store.get_products(None, None)
+    if not products_list:
+        return {"ok": False, "error": "No products synced yet — run a sync first"}
+    first = products_list[0]
+    raw = first.get("raw_payload")
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except Exception:
+            pass
+    return {"ok": True, "product_id": first["id"], "title": first.get("title"), "raw_payload": raw}
+
+
 @app.post("/datadive/test-connection")
 async def test_connection() -> dict[str, Any]:
     try:
@@ -77,23 +137,46 @@ async def api_test_connection() -> dict[str, Any]:
 
 
 @app.get("/rank-radar/brands")
-def brands() -> list[dict[str, Any]]:
+async def brands() -> list[dict[str, Any]]:
+    from .datadive_client import HttpDataDiveClient
+    # In live mode, fetch brands directly from DataDive so real niche names
+    # always appear — even if the DB hasn't been synced yet or sync failed.
+    if isinstance(client, HttpDataDiveClient):
+        try:
+            live = await client.list_brands()
+            if live:
+                return live
+        except Exception as exc:  # noqa: BLE001
+            print(f"[RankRadar] live brands fetch failed: {exc}")
     return store.list_brands()
 
 
 @app.get("/api/rank-radar/brands")
-def api_brands() -> list[dict[str, Any]]:
-    return brands()
+async def api_brands() -> list[dict[str, Any]]:
+    return await brands()
 
 
 @app.get("/rank-radar/marketplaces")
-def marketplaces(brandId: str | None = None) -> list[dict[str, Any]]:
+async def marketplaces(brandId: str | None = None) -> list[dict[str, Any]]:
+    from .datadive_client import HttpDataDiveClient
+    # Derive marketplaces from live product data so the filter reflects reality.
+    if isinstance(client, HttpDataDiveClient):
+        try:
+            products_live = await client.list_rank_radar_products()
+            if brandId:
+                from .datadive_client import _filter_by_brand
+                products_live = _filter_by_brand(products_live, brandId)
+            codes = sorted({str(p.get("marketplace") or "com") for p in products_live})
+            from .datadive_client import _marketplace_name
+            return [{"id": f"market-{c}", "code": c, "name": _marketplace_name(c), "amazon_domain": f"amazon.{c}"} for c in codes]
+        except Exception as exc:  # noqa: BLE001
+            print(f"[RankRadar] live marketplaces fetch failed: {exc}")
     return store.list_marketplaces(brandId)
 
 
 @app.get("/api/rank-radar/marketplaces")
-def api_marketplaces(brandId: str | None = None) -> list[dict[str, Any]]:
-    return marketplaces(brandId)
+async def api_marketplaces(brandId: str | None = None) -> list[dict[str, Any]]:
+    return await marketplaces(brandId)
 
 
 @app.get("/rank-radar/products")

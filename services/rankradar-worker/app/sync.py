@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-from .datadive_client import BaseDataDiveClient, HttpDataDiveClient
+from .datadive_client import BaseDataDiveClient, HttpDataDiveClient, extract_brands_from_rank_radars
 from .store import RankRadarStore
 
 
@@ -23,21 +23,38 @@ async def run_sync(
     started = datetime.now(timezone.utc)
     sync_run_id = f"sync-{uuid4().hex[:12]}"
     is_live = isinstance(client, HttpDataDiveClient)
+    provider = "live" if is_live else "mock"
 
     try:
-        connection = await client.test_connection()
-        products = await client.list_rank_radar_products(brand_id=brand_id, marketplace=marketplace)
-        provider = connection.get("provider", "mock")
+        if is_live:
+            products = await client.list_rank_radar_products(brand_id=brand_id, marketplace=marketplace)
 
-        if provider == "mock":
+            # Level 1: try dedicated /v1/niches endpoint
+            brands: list = []
+            try:
+                brands = await client.list_brands()
+                if brands:
+                    print(f"[RankRadar] Got {len(brands)} brands from /v1/niches")
+            except Exception as brand_exc:  # noqa: BLE001
+                print(f"[RankRadar] /v1/niches failed ({brand_exc})")
+
+            # Level 2: extract niche/brand from rank-radar product fields
+            if not brands:
+                brands = extract_brands_from_rank_radars(products)
+                if brands:
+                    print(f"[RankRadar] Extracted {len(brands)} brands from rank-radar product data")
+                else:
+                    print("[RankRadar] No niche fields found in products; brands will fall back to marketplace codes")
+
+            store.replace_live_rank_radars(products, brands=brands)
+            inserted_alerts = 0
+        else:
             store.upsert_seed_data()
             inserted_alerts = store.rebuild_alerts()
-        else:
-            store.replace_live_rank_radars(products)
-            inserted_alerts = 0
+            products = []
 
         if is_live:
-            _store_raw_responses(store, client, sync_run_id)  # type: ignore[arg-type]
+            _store_raw_responses(store, client, sync_run_id)
 
         run = store.record_sync_run(
             "success",
@@ -55,7 +72,7 @@ async def run_sync(
 
     except Exception as exc:  # noqa: BLE001 — sync endpoints must always record failure
         if is_live:
-            _store_raw_responses(store, client, sync_run_id)  # type: ignore[arg-type]
+            _store_raw_responses(store, client, sync_run_id)
         run = store.record_sync_run(
             "failed",
             sync_run_id=sync_run_id,

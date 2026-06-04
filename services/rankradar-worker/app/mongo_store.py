@@ -35,17 +35,36 @@ class MongoRankRadarStore:
         row.pop("_id", None)
         return row
 
-    def replace_live_rank_radars(self, products: list[dict[str, Any]]) -> None:
+    def replace_live_rank_radars(self, products: list[dict[str, Any]], brands: list[dict[str, Any]] | None = None) -> None:
         now = datetime.now(timezone.utc).isoformat()
         marketplace_codes = sorted({str(row.get("marketplace") or "com") for row in products})
 
+        # Build niche_id → brand doc lookup for product linking
+        niche_to_brand: dict[str, dict] = {}
+        if brands:
+            for b in brands:
+                nid = str(b.get("datadive_brand_id") or "")
+                if nid:
+                    niche_to_brand[nid] = b
+
+        from .datadive_client import _marketplace_name
+
         brand_ops = []
         marketplace_ops = []
+
+        if brands:
+            for b in brands:
+                brand_doc = {"id": b["id"], "datadive_brand_id": b.get("datadive_brand_id", ""), "name": b.get("name", b["id"]), "updated_at": now}
+                brand_ops.append(UpdateOne({"id": b["id"]}, {"$set": brand_doc, "$setOnInsert": {"created_at": now}}, upsert=True))
+        else:
+            for code in marketplace_codes or ["com"]:
+                brand_doc = {"id": f"brand-datadive-{code}", "datadive_brand_id": f"datadive-{code}", "name": f"DataDive {code.upper()} Rank Radars", "updated_at": now}
+                brand_ops.append(UpdateOne({"id": brand_doc["id"]}, {"$set": brand_doc, "$setOnInsert": {"created_at": now}}, upsert=True))
+
         for code in marketplace_codes or ["com"]:
-            brand = {"id": f"brand-datadive-{code}", "datadive_brand_id": f"datadive-{code}", "name": f"DataDive {code.upper()} Rank Radars", "updated_at": now}
-            marketplace = {"id": f"market-{code}", "code": code, "name": f"Amazon {code}", "amazon_domain": f"amazon.{code}", "updated_at": now}
-            brand_ops.append(UpdateOne({"id": brand["id"]}, {"$set": brand, "$setOnInsert": {"created_at": now}}, upsert=True))
-            marketplace_ops.append(UpdateOne({"id": marketplace["id"]}, {"$set": marketplace, "$setOnInsert": {"created_at": now}}, upsert=True))
+            mp = {"id": f"market-{code}", "code": code, "name": _marketplace_name(code), "amazon_domain": f"amazon.{code}", "updated_at": now}
+            marketplace_ops.append(UpdateOne({"id": mp["id"]}, {"$set": mp, "$setOnInsert": {"created_at": now}}, upsert=True))
+
         if brand_ops:
             self.db.brands.bulk_write(brand_ops, ordered=False)
         if marketplace_ops:
@@ -58,14 +77,27 @@ class MongoRankRadarStore:
             asin_obj = item.get("asin") if isinstance(item.get("asin"), dict) else {}
             marketplace = str(item.get("marketplace") or "com")
             asin = str(asin_obj.get("asin") or item.get("asin") or rank_radar_id[:10]).upper()
+
+            # Resolve brand: try nicheId → real brand, fall back to marketplace code
+            niche = item.get("niche") or {}
+            if isinstance(niche, str):
+                niche = {}
+            niche_id = str(
+                item.get("nicheId") or item.get("niche_id") or item.get("brandId")
+                or niche.get("id") or niche.get("nicheId") or ""
+            )
+            brand_doc = niche_to_brand.get(niche_id)
+            brand_id = brand_doc["id"] if brand_doc else f"brand-datadive-{marketplace}"
+            brand_name = brand_doc["name"] if brand_doc else f"DataDive {marketplace.upper()} Rank Radars"
+
             product = {
                 "id": f"rr-{rank_radar_id}",
                 "datadive_product_id": rank_radar_id,
-                "brand_id": f"brand-datadive-{marketplace}",
+                "brand_id": brand_id,
                 "marketplace_id": f"market-{marketplace}",
-                "brand_name": f"DataDive {marketplace.upper()} Rank Radars",
+                "brand_name": brand_name,
                 "marketplace_code": marketplace,
-                "marketplace_name": f"Amazon {marketplace}",
+                "marketplace_name": _marketplace_name(marketplace),
                 "title": item.get("title") or asin_obj.get("title") or f"DataDive Rank Radar {asin}",
                 "asin": asin,
                 "parent_asin": asin_obj.get("parent_asin") or item.get("parentAsin") or asin,
