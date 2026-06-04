@@ -28,17 +28,20 @@ export default function TopBar({ view, onSync, syncing, lastSyncAt, syncError })
 
       <div className="flex items-center gap-3">
         {/* Sync status badge */}
-        {lastSyncAt && (
-          <div className="flex items-center gap-1.5 text-xs">
+        {(lastSyncAt || syncError) && (
+          <div className="flex items-center gap-1.5 text-xs max-w-[240px]">
             {syncError ? (
-              <WifiOff className="w-3.5 h-3.5 text-destructive" />
+              <WifiOff className="w-3.5 h-3.5 text-destructive shrink-0" />
             ) : isStale ? (
-              <WifiOff className="w-3.5 h-3.5 text-yellow-400" />
+              <WifiOff className="w-3.5 h-3.5 text-yellow-400 shrink-0" />
             ) : (
-              <Wifi className="w-3.5 h-3.5 text-green-400" />
+              <Wifi className="w-3.5 h-3.5 text-green-400 shrink-0" />
             )}
-            <span className={syncError ? 'text-destructive' : isStale ? 'text-yellow-400' : 'text-muted-foreground'}>
-              {syncError ? 'Sync error' : `Synced ${timeAgo(lastSyncAt)}`}
+            <span
+              className={`truncate ${syncError ? 'text-destructive' : isStale ? 'text-yellow-400' : 'text-muted-foreground'}`}
+              title={syncError || undefined}
+            >
+              {syncError ? syncError : `Synced ${timeAgo(lastSyncAt)}`}
             </span>
           </div>
         )}

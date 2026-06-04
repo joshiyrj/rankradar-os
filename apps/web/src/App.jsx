@@ -87,12 +87,21 @@ export default function App() {
     setSyncing(true);
     setSyncError('');
     try {
-      await api.sync({ brandId: filters.brandId, marketplace: filters.marketplace });
-      const [productRows, alertRows, syncRuns] = await Promise.all([
+      const result = await api.sync({ brandId: filters.brandId, marketplace: filters.marketplace });
+      if (!result?.ok) {
+        setSyncError(result?.error || result?.syncRun?.error_message || 'Sync failed — check Settings for details.');
+        return;
+      }
+      // Refresh all data after successful sync (brands may have new niches)
+      const [brandRows, allMarketplaces, productRows, alertRows, syncRuns] = await Promise.all([
+        api.brands(),
+        api.marketplaces(),
         api.products(filters),
         api.alerts({ ...filters, status: 'open' }),
         api.syncRuns().catch(() => []),
       ]);
+      setBrands(brandRows);
+      setMarketplaces(allMarketplaces);
       setProducts(productRows);
       setAlerts(alertRows);
       const lastSuccess = syncRuns.find((r) => r.status === 'success');
