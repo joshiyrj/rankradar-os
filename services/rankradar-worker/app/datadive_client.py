@@ -175,12 +175,7 @@ class HttpDataDiveClient(BaseDataDiveClient):
                 break
             page += 1
 
-        # Log first item keys so we can identify the name field from Render logs
-        if all_items:
-            first = all_items[0]
-            print(f"[RankRadar] /v1/niches first item keys: {list(first.keys())}")
-            print(f"[RankRadar] /v1/niches first item: {first}")
-
+        print(f"[RankRadar] /v1/niches returned {len(all_items)} niches")
         return _parse_niche_items(all_items)
 
     async def list_marketplaces(self, brand_id: str | None = None) -> list[dict[str, Any]]:
@@ -275,10 +270,6 @@ def _parse_niche_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     Tries many possible field name conventions used by DataDive.
     Falls back to scanning all string values for a human-readable name.
     """
-    # Known ID-like field names to skip when looking for a display name
-    _ID_KEYS = {"id", "nicheId", "niche_id", "_id", "ID", "brandId", "brand_id",
-                "datadive_product_id", "rankRadarId", "asin", "sku"}
-
     brands = []
     seen: set[str] = set()
     for item in items:
@@ -288,23 +279,11 @@ def _parse_niche_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
         )
         # Try explicit name fields first
         name = (
-            item.get("name") or item.get("nicheName") or item.get("niche_name")
+            item.get("nicheLabel") or item.get("name") or item.get("nicheName") or item.get("niche_name")
             or item.get("title") or item.get("label") or item.get("displayName")
             or item.get("brandName") or item.get("brand_name") or item.get("niche")
             or item.get("keyword") or item.get("category") or item.get("segment")
         )
-        # If no explicit name found, scan all string values that look like words
-        # (contain spaces or mixed case words, not pure alphanumeric IDs)
-        if not name:
-            for k, v in item.items():
-                if k in _ID_KEYS:
-                    continue
-                if isinstance(v, str) and v and (
-                    " " in v or (v.replace("-", "").replace("_", "").isalpha() and len(v) > 2)
-                ):
-                    name = v
-                    print(f"[RankRadar] Using field '{k}' as brand name: {v!r}")
-                    break
         name = str(name or niche_id)
         if niche_id and niche_id not in seen:
             seen.add(niche_id)
