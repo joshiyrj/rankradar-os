@@ -29,10 +29,10 @@ async def run_sync(
         if is_live:
             products = await client.list_rank_radar_products(brand_id=brand_id, marketplace=marketplace)
 
-            # Level 1: try dedicated /v1/niches endpoint
+            # Level 1: try dedicated /v1/niches endpoint (force_refresh bypasses cache)
             brands: list = []
             try:
-                brands = await client.list_brands()
+                brands = await client.list_brands(force_refresh=True)
                 if brands:
                     print(f"[RankRadar] Got {len(brands)} brands from /v1/niches")
             except Exception as brand_exc:  # noqa: BLE001

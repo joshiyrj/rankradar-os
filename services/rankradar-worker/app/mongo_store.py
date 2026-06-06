@@ -135,6 +135,23 @@ class MongoRankRadarStore:
         if variation_ops:
             self.db.product_variations.bulk_write(variation_ops, ordered=False)
 
+    def brands_need_refresh(self) -> bool:
+        """Return True if brand names look like raw IDs (bad data from old sync)."""
+        rows = list(self.db.brands.find({"id": {"$regex": "^brand-niche-"}}, {"id": 1, "datadive_brand_id": 1, "name": 1, "_id": 0}).limit(5))
+        if not rows:
+            return False
+        return any(r.get("name") == r.get("datadive_brand_id") or r.get("name") == r.get("id") for r in rows)
+
+    def upsert_brands(self, brands: list[dict]) -> None:
+        """Update brand names without touching products or other tables."""
+        from pymongo import UpdateOne
+        ops = []
+        for b in brands:
+            doc = {"id": b["id"], "datadive_brand_id": b.get("datadive_brand_id", ""), "name": b.get("name", b["id"])}
+            ops.append(UpdateOne({"id": b["id"]}, {"$set": doc}, upsert=True))
+        if ops:
+            self.db.brands.bulk_write(ops, ordered=False)
+
     def list_brands(self) -> list[dict[str, Any]]:
         return [self._clean(row) for row in self.db.brands.find({}, {"_id": 0}).sort("name", ASCENDING)]
 

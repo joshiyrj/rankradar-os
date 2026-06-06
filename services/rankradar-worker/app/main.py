@@ -56,7 +56,24 @@ WEB_DIST = Path(__file__).resolve().parents[3] / "apps" / "web" / "dist"
 async def startup_sync() -> None:
     try:
         is_live = settings.datadive_provider.lower() in {"live", "http", "datadive"}
-        if is_live and not store.get_products(None, None):
+        if not is_live:
+            return
+
+        from .datadive_client import HttpDataDiveClient
+
+        # Fix bad brand names from old syncs (names stored as IDs instead of labels)
+        if isinstance(client, HttpDataDiveClient) and store.brands_need_refresh():
+            print("[RankRadar] Brand names look like IDs — refreshing from /v1/niches...")
+            try:
+                fresh_brands = await client.list_brands(force_refresh=True)
+                if fresh_brands:
+                    store.upsert_brands(fresh_brands)
+                    print(f"[RankRadar] Fixed {len(fresh_brands)} brand names.")
+            except Exception as exc:  # noqa: BLE001
+                print(f"[RankRadar] Brand name refresh failed: {exc}")
+
+        # Initial sync if no products yet
+        if not store.get_products(None, None):
             print("[RankRadar] No products found — running initial sync...")
             result = await run_sync(store, client)
             if result.get("ok"):
@@ -64,7 +81,7 @@ async def startup_sync() -> None:
             else:
                 print(f"[RankRadar] Initial sync failed: {result.get('error')}")
     except Exception as exc:
-        print(f"[RankRadar] Startup sync skipped: {exc}")
+        print(f"[RankRadar] Startup skipped: {exc}")
 
 
 @app.get("/health")
@@ -139,8 +156,12 @@ async def api_test_connection() -> dict[str, Any]:
 @app.get("/rank-radar/brands")
 async def brands() -> list[dict[str, Any]]:
     from .datadive_client import HttpDataDiveClient
-    # In live mode, fetch brands directly from DataDive so real niche names
-    # always appear — even if the DB hasn't been synced yet or sync failed.
+    # Serve from DB if populated — avoids 25 live API calls on every request.
+    # DB is populated during sync. Falls back to live API on first run.
+    db_brands = store.list_brands()
+    if db_brands:
+        return db_brands
+    # DB is empty (first launch before any sync) — hit the API once to populate
     if isinstance(client, HttpDataDiveClient):
         try:
             live = await client.list_brands()
@@ -148,7 +169,7 @@ async def brands() -> list[dict[str, Any]]:
                 return live
         except Exception as exc:  # noqa: BLE001
             print(f"[RankRadar] live brands fetch failed: {exc}")
-    return store.list_brands()
+    return []
 
 
 @app.get("/api/rank-radar/brands")

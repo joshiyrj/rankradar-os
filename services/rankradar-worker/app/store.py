@@ -384,6 +384,24 @@ class RankRadarStore:
                 inserted += 1
         return inserted
 
+    def brands_need_refresh(self) -> bool:
+        """Return True if the brand names look like raw IDs (bad data from old sync)."""
+        with self.connect() as conn:
+            rows = conn.execute("SELECT id, datadive_brand_id, name FROM brands WHERE id LIKE 'brand-niche-%' LIMIT 5").fetchall()
+            if not rows:
+                return False
+            # If any brand's name equals its datadive_brand_id, names are IDs not labels
+            return any(r["name"] == r["datadive_brand_id"] or r["name"] == r["id"] for r in rows)
+
+    def upsert_brands(self, brands: list[dict]) -> None:
+        """Update brand names without touching products or other tables."""
+        with self.connect() as conn:
+            for b in brands:
+                conn.execute(
+                    "INSERT OR REPLACE INTO brands(id, datadive_brand_id, name) VALUES(?,?,?)",
+                    (b["id"], b.get("datadive_brand_id", ""), b.get("name", b["id"])),
+                )
+
     def list_brands(self) -> list[dict]:
         with self.connect() as conn:
             return [dict(r) for r in conn.execute("SELECT * FROM brands ORDER BY name")]

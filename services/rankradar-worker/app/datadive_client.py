@@ -19,7 +19,7 @@ class BaseDataDiveClient(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def list_brands(self) -> list[dict[str, Any]]:
+    async def list_brands(self, force_refresh: bool = False) -> list[dict[str, Any]]:
         raise NotImplementedError
 
     @abstractmethod
@@ -43,7 +43,7 @@ class MockDataDiveClient(BaseDataDiveClient):
     async def test_connection(self) -> dict[str, Any]:
         return {"ok": True, "provider": "mock", "message": "Mock provider is active and ready."}
 
-    async def list_brands(self) -> list[dict[str, Any]]:
+    async def list_brands(self, force_refresh: bool = False) -> list[dict[str, Any]]:
         return BRANDS
 
     async def list_marketplaces(self, brand_id: str | None = None) -> list[dict[str, Any]]:
@@ -92,6 +92,9 @@ class HttpDataDiveClient(BaseDataDiveClient):
             raise DataDiveClientError("DATADIVE_API_BASE_URL is required when DATADIVE_PROVIDER=live")
         self.settings = settings
         self._pending_raw_responses: list[dict[str, Any]] = []
+        # In-process cache for brands — avoids 25 sequential API calls on every request
+        self._brands_cache: list[dict[str, Any]] = []
+        self._brands_cache_ts: float = 0.0
         self.client = httpx.AsyncClient(
             base_url=settings.datadive_api_base_url.rstrip("/"),
             timeout=httpx.Timeout(30.0),
@@ -151,13 +154,16 @@ class HttpDataDiveClient(BaseDataDiveClient):
             "productsAccessible": len(items) > 0,
         }
 
-    async def list_brands(self) -> list[dict[str, Any]]:
+    async def list_brands(self, force_refresh: bool = False) -> list[dict[str, Any]]:
         """Fetch real brand/niche names from /v1/niches with full pagination.
 
-        Uses the same pagination pattern as list_rank_radar_products so the API
-        receives the expected currentPage/pageSize parameters.
-        Returns [] on empty response — callers fall back gracefully.
+        Results are cached in-process for 10 minutes so the dropdown is instant
+        after the first load. Pass force_refresh=True (done during sync) to bypass.
         """
+        import time
+        if not force_refresh and self._brands_cache and (time.time() - self._brands_cache_ts) < 600:
+            return self._brands_cache
+
         all_items: list[dict[str, Any]] = []
         page = 1
         while True:
@@ -166,7 +172,6 @@ class HttpDataDiveClient(BaseDataDiveClient):
                 {"currentPage": page, "pageSize": 50, "status": "ALL"},
             )
             items = self._items(payload)
-            # If standard envelope keys miss, scan every value for a list of dicts
             if not items and isinstance(payload, dict):
                 items = _first_list_of_dicts(payload)
             all_items.extend(items)
@@ -175,8 +180,12 @@ class HttpDataDiveClient(BaseDataDiveClient):
                 break
             page += 1
 
-        print(f"[RankRadar] /v1/niches returned {len(all_items)} niches")
-        return _parse_niche_items(all_items)
+        result = _parse_niche_items(all_items)
+        if result:
+            self._brands_cache = result
+            self._brands_cache_ts = time.time()
+            print(f"[RankRadar] /v1/niches: cached {len(result)} brands")
+        return result
 
     async def list_marketplaces(self, brand_id: str | None = None) -> list[dict[str, Any]]:
         products = await self.list_rank_radar_products()
